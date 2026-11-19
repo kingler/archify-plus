@@ -21,3 +21,6 @@
 
 # Release archives contain binary bytes and must not be line-normalized.
 archify.zip binary
+
+# Built by enterprise/scripts/build-studio.mjs from enterprise/studio/ and enterprise/lib/.
+/enterprise/studio.html linguist-generated=true
