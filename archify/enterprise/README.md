@@ -23,9 +23,9 @@ enterprise/
 
 No dependencies. Node 18 or newer.
 
-![The Studio showing the cross-layer view with Order Service selected](assets/studio.png)
-
 ## Try it
+
+Paths below are relative to the Skill package root (`archify/` in the repository).
 
 Open `enterprise/studio.html` in a browser. It loads the bundled example and
 keeps your edits in that browser's local storage.
@@ -209,7 +209,7 @@ does not block the plan: one dependency is dropped and reported in
 full Viewer, validators, and delivery receipts:
 
 ```bash
-node archify/bin/archify.mjs render class enterprise-out/archify/domain_classes.class.json
+node bin/archify.mjs render class enterprise-out/archify/domain_classes.class.json
 ```
 
 The architecture renderer has seven node types and four connection variants,
@@ -227,11 +227,10 @@ node enterprise/scripts/build-studio.mjs
 
 The build inlines the library modules into one script, so top-level names must
 be unique across `lib/`; the build fails with the two file names if they are
-not. `test/enterprise.test.mjs` fails when the committed page is stale.
+not. The repository test `test/enterprise.test.mjs` fails when the committed page is stale.
 
 ## Scope
 
-This is a modelling and generation layer beside the Archify Skill, not part of
-the packaged Skill (`archify.zip`) yet. It does not import existing BPMN,
+This layer ships inside the Skill package. It does not import existing BPMN,
 XMI, or ArchiMate files, lay out a view without authored rows and columns, or
 generate method bodies.

@@ -7,18 +7,18 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { SaxesParser } from 'saxes';
 
-import { validateModel } from '../enterprise/lib/model.mjs';
-import { renderView } from '../enterprise/lib/render.mjs';
-import { generateCode, classifierModel } from '../enterprise/lib/codegen.mjs';
-import { generateTasks, tasksCsv, tasksGoal, tasksMarkdown } from '../enterprise/lib/tasks.mjs';
-import { createRun, enabled, fire, runToCompletion } from '../enterprise/lib/simulate.mjs';
-import { compileNative } from '../enterprise/lib/native.mjs';
-import { buildStudio } from '../enterprise/scripts/build-studio.mjs';
+import { validateModel } from '../archify/enterprise/lib/model.mjs';
+import { renderView } from '../archify/enterprise/lib/render.mjs';
+import { generateCode, classifierModel } from '../archify/enterprise/lib/codegen.mjs';
+import { generateTasks, tasksCsv, tasksGoal, tasksMarkdown } from '../archify/enterprise/lib/tasks.mjs';
+import { createRun, enabled, fire, runToCompletion } from '../archify/enterprise/lib/simulate.mjs';
+import { compileNative } from '../archify/enterprise/lib/native.mjs';
+import { buildStudio } from '../archify/enterprise/scripts/build-studio.mjs';
 import { createScratchDirectory } from './helpers/scratch-directory.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const examplePath = path.join(repoRoot, 'enterprise', 'examples', 'order-to-cash.enterprise.json');
-const cli = path.join(repoRoot, 'enterprise', 'bin', 'enterprise.mjs');
+const examplePath = path.join(repoRoot, 'archify', 'enterprise', 'examples', 'order-to-cash.enterprise.json');
+const cli = path.join(repoRoot, 'archify', 'enterprise', 'bin', 'enterprise.mjs');
 const archify = path.join(repoRoot, 'archify', 'bin', 'archify.mjs');
 const load = () => JSON.parse(fs.readFileSync(examplePath, 'utf8'));
 const codes = (model) => validateModel(model).diagnostics.map((entry) => entry.code);
@@ -234,5 +234,5 @@ test('the CLI builds every output and refuses an invalid model', () => {
 });
 
 test('the committed Studio page matches its sources', () => {
-  assert.equal(fs.readFileSync(path.join(repoRoot, 'enterprise', 'studio.html'), 'utf8'), buildStudio(), 'run: node enterprise/scripts/build-studio.mjs');
+  assert.equal(fs.readFileSync(path.join(repoRoot, 'archify', 'enterprise', 'studio.html'), 'utf8'), buildStudio(), 'run: node archify/enterprise/scripts/build-studio.mjs');
 });

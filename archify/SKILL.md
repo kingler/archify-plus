@@ -74,6 +74,17 @@ When choosing among native diagram types is ambiguous, run `node bin/archify.mjs
 
 For an everyday subject, keep the same diagram modes and semantic types, then name them for the reader: use everyday `icon` values and `meta.legend` labels as in [Node icons](references/authoring-contract.md#node-icons). Ask for missing personal facts instead of inventing dates, amounts, or rules.
 
+## Enterprise models
+
+Use the enterprise layer when the user asks for ArchiMate viewpoints, BPMN, UML activity, use-case, component or deployment diagrams, several diagram types over one shared model, or code or delivery tasks generated from a model. Read [Enterprise](enterprise/README.md) for the model format and notation, start from `enterprise/examples/order-to-cash.enterprise.json`, then run:
+
+```bash
+node enterprise/bin/enterprise.mjs validate <model.json>
+node enterprise/bin/enterprise.mjs build <model.json> --out <directory>
+```
+
+`build` writes one SVG per view, generated code, the task plan, and native typed JSON for class, sequence, state and architecture-shaped views; deliver those through the native steps to get the Viewer and receipts. Its SVGs skip the delivery gates, so say they were not checked. `enterprise/studio.html` is an interactive editor the user can open. For a single class, sequence, lifecycle or architecture diagram, use the Type router instead.
+
 ## Mermaid input
 
 Read Mermaid for topology and meaning, then author fresh Archify JSON; do not mechanically render Mermaid styling.
