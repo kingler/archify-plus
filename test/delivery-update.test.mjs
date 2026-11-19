@@ -22,8 +22,8 @@ function fixture(t) {
   const cacheDirectory = path.join(root, 'cache');
   fs.writeFileSync(releasePath, `${JSON.stringify({
     schemaVersion: 1, skillId: 'archify', channel: 'stable', version: installed,
-    source: { repository: 'https://github.com/tt-a1i/archify' },
-    updateManifestUrl: 'https://tt-a1i.github.io/archify/skill-updates/archify/stable.json',
+    source: { repository: 'https://github.com/kingler/archify-plus' },
+    updateManifestUrl: 'https://kingler.github.io/archify-plus/skill-updates/archify/stable.json',
   })}\n`);
   return { root, releasePath, cacheDirectory };
 }
@@ -32,10 +32,10 @@ function manifest() {
   return {
     schemaVersion: 1, skillId: 'archify', channel: 'stable', version: available,
     publishedAt: '2026-08-28T07:00:00Z',
-    source: { repository: 'https://github.com/tt-a1i/archify', ref: 'v2.16.0', treeSha: 'a'.repeat(40) },
+    source: { repository: 'https://github.com/kingler/archify-plus', ref: 'v2.16.0', treeSha: 'a'.repeat(40) },
     artifact: { sha256: 'b'.repeat(64) },
     summary: 'A release is available.',
-    releaseNotes: 'https://github.com/tt-a1i/archify/releases/tag/v2.16.0',
+    releaseNotes: 'https://github.com/kingler/archify-plus/releases/tag/v2.16.0',
     severity: 'normal',
   };
 }
