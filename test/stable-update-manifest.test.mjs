@@ -76,13 +76,13 @@ test('stable release gate binds manifest tag, tree, and final archive digest', (
       version: '3.0.0',
       publishedAt,
       source: {
-        repository: 'https://github.com/tt-a1i/archify',
+        repository: 'https://github.com/kingler/archify-plus',
         ref: 'v3.0.0',
         treeSha,
       },
       artifact: { sha256: artifactSha },
       summary: 'Stable release fixture.',
-      releaseNotes: 'https://github.com/tt-a1i/archify/releases/tag/v3.0.0',
+      releaseNotes: 'https://github.com/kingler/archify-plus/releases/tag/v3.0.0',
       severity: 'normal',
     };
     writeJson(manifestPath, manifest);

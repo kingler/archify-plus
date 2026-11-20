@@ -3,7 +3,7 @@ name: archify
 description: "Create validated architecture, workflow, sequence, data-flow, lifecycle/state, ERD, class, tree, timeline, and waterfall diagrams as explorable standalone HTML with dark/light themes, motion and image/SVG/WebM export. Accept requirements or Mermaid; inspect repository evidence for code-backed diagrams. Use when visualizing systems, API calls, pipelines, schemas, histories, timings, or everyday steps, parts, relationships and states. Also turn an answer into a one-page explainer, with the conclusion first, structured panels, native diagrams and charts, when the user asks for a page, an explainer or an answer to share (做成一页, 用页面讲), or proactively when the user's rules opt in with an [archify explainer: ...] line. Not for dashboards."
 license: Apache-2.0
 metadata:
-  version: "3.2"
+  version: "3.3"
   author: tt-a1i
 ---
 
@@ -73,6 +73,17 @@ Before the first candidate, use the authoring references and relevant repository
 When choosing among native diagram types is ambiguous, run `node bin/archify.mjs guide "<scenario>" --json`. Scenario proof examples are structural references, not facts to copy.
 
 For an everyday subject, keep the same diagram modes and semantic types, then name them for the reader: use everyday `icon` values and `meta.legend` labels as in [Node icons](references/authoring-contract.md#node-icons). Ask for missing personal facts instead of inventing dates, amounts, or rules.
+
+## Enterprise models
+
+Use the enterprise layer when the user asks for ArchiMate viewpoints, BPMN, UML activity, use-case, component or deployment diagrams, several diagram types over one shared model, or code or delivery tasks generated from a model. Read [Enterprise](enterprise/README.md) for the model format and notation, start from `enterprise/examples/order-to-cash.enterprise.json`, then run:
+
+```bash
+node enterprise/bin/enterprise.mjs validate <model.json>
+node enterprise/bin/enterprise.mjs build <model.json> --out <directory>
+```
+
+`build` writes one SVG per view, generated code, the task plan, and native typed JSON for class, sequence, state and architecture-shaped views; deliver those through the native steps to get the Viewer and receipts. Its SVGs skip the delivery gates, so say they were not checked. `enterprise/studio.html` is an interactive editor the user can open. For a single class, sequence, lifecycle or architecture diagram, use the Type router instead.
 
 ## Mermaid input
 

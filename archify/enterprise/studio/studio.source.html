@@ -1,0 +1,711 @@
+<title>Archify Enterprise Studio</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,400;0,600;0,700;1,400&display=swap">
+<style>
+/* Layout: one technical canvas with a view rail on the left and one evidence panel on the right (DESIGN.md, "The Evidence Console"). */
+:root {
+  --bg: #020617; --mask: #0f172a; --text: #ffffff; --text-muted: #94a3b8; --text-dim: #64748b; --border: #1e293b;
+  --control: rgba(15, 23, 42, 0.8); --control-border: #334155; --control-text: #e2e8f0; --accent: #22d3ee; --good: #34d399; --warn: #fbbf24; --bad: #fb7185;
+  --frontend: #22d3ee; --backend: #34d399; --database: #a78bfa; --cloud: #fbbf24; --security: #fb7185; --messagebus: #fb923c; --external: #94a3b8;
+  --mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --r-precise: 0.2rem; --r-control: 0.5rem; --r-panel: 1rem;
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) {
+  --bg: #f4f5f7; --mask: #ffffff; --text: #111827; --text-muted: #5b6474; --text-dim: #7b8494; --border: #e5e7eb;
+  --control: rgba(255, 255, 255, 0.92); --control-border: #cbd5e1; --control-text: #334155; --accent: #0891b2; --good: #059669; --warn: #b45309; --bad: #e11d48;
+  --frontend: #0891b2; --backend: #059669; --database: #7c3aed; --cloud: #d97706; --security: #e11d48; --messagebus: #ea580c; --external: #64748b;
+  color-scheme: light;
+} }
+:root[data-theme="light"] {
+  --bg: #f4f5f7; --mask: #ffffff; --text: #111827; --text-muted: #5b6474; --text-dim: #7b8494; --border: #e5e7eb;
+  --control: rgba(255, 255, 255, 0.92); --control-border: #cbd5e1; --control-text: #334155; --accent: #0891b2; --good: #059669; --warn: #b45309; --bad: #e11d48;
+  --frontend: #0891b2; --backend: #059669; --database: #7c3aed; --cloud: #d97706; --security: #e11d48; --messagebus: #ea580c; --external: #64748b;
+  color-scheme: light;
+}
+:root[data-preset="blueprint"] {
+  --bg: #030711; --mask: #07101e; --text: #f5fbff; --text-muted: #9eb0c7; --text-dim: #6a7f9a; --border: #1d3350;
+  --control: rgba(6, 14, 28, 0.78); --control-border: #2c4564; --control-text: #dbe7f5; --accent: #67e8f9; --good: #5eead4; --warn: #fcd34d; --bad: #fda4af;
+  --frontend: #67e8f9; --backend: #5eead4; --database: #c4b5fd; --cloud: #fcd34d; --security: #fda4af; --messagebus: #fdba74; --external: #9eb0c7;
+  --r-control: 0.2rem; --r-panel: 0.2rem; color-scheme: dark;
+}
+html, body { height: 100%; }
+body { background: var(--bg); color: var(--text); font-family: var(--mono); font-size: 12px; line-height: 1.55; }
+*, *::before, *::after { box-sizing: border-box; }
+button, input, select, textarea { font: inherit; color: inherit; }
+.app { height: 100%; display: grid; grid-template-rows: auto minmax(0, 1fr); padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 12px; gap: 12px; }
+.bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.brand { display: flex; align-items: baseline; gap: 10px; min-width: 0; margin-right: auto; }
+.brand h1 { margin: 0; font-size: 14px; font-weight: 700; letter-spacing: -0.02em; white-space: nowrap; }
+.brand span { color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.btn { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; padding: 0 12px; border: 1px solid var(--control-border); border-radius: var(--r-control); background: var(--control); color: var(--control-text); cursor: pointer; white-space: nowrap; transition: border-color .15s, background .15s; }
+.btn:hover { border-color: var(--accent); }
+.btn:focus-visible, .tab:focus-visible, .view-link:focus-visible, .chip:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, .task:focus-visible, .link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.btn[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+.btn.small { min-height: 26px; padding: 0 8px; font-size: 11px; }
+.btn.danger:hover { border-color: var(--bad); color: var(--bad); }
+.btn:disabled { opacity: .45; cursor: default; }
+.work { display: grid; grid-template-columns: 232px minmax(0, 1fr) 388px; gap: 12px; min-height: 0; }
+.pane { min-height: 0; min-width: 0; border: 1px solid var(--border); border-radius: var(--r-panel); background: color-mix(in srgb, var(--mask) 50%, transparent); overflow: hidden; display: flex; flex-direction: column; }
+.label { font-size: 10px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: var(--text-muted); }
+.rail { overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 14px; }
+.rail section { display: flex; flex-direction: column; gap: 4px; }
+.view-link { display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 8px; border: 1px solid transparent; border-radius: var(--r-control); background: none; text-align: left; cursor: pointer; color: var(--control-text); }
+.view-link:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.view-link[aria-current="true"] { border-color: color-mix(in srgb, var(--accent) 55%, var(--border)); background: color-mix(in srgb, var(--accent) 10%, transparent); color: var(--text); }
+.view-link small { margin-left: auto; color: var(--text-dim); font-size: 10px; }
+.dot { flex: none; width: 8px; height: 8px; border-radius: 2px; background: var(--tone, var(--external)); }
+.search { width: 100%; min-height: 32px; padding: 0 10px; border: 1px solid var(--control-border); border-radius: var(--r-control); background: var(--mask); }
+.stage { position: relative; }
+.canvas { position: relative; flex: 1; min-height: 0; overflow: hidden; touch-action: none; cursor: grab; background: var(--bg); background-image: radial-gradient(color-mix(in srgb, var(--text-muted) 16%, transparent) 1px, transparent 1px); background-size: 22px 22px; }
+.canvas.is-panning { cursor: grabbing; }
+.canvas-inner { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
+.canvas-inner svg { display: block; background: transparent !important; }
+.canvas-inner svg .ea-canvas { fill: transparent; }
+.floating { position: absolute; display: flex; flex-wrap: wrap; gap: 6px; z-index: 2; }
+.floating.tl { left: 10px; top: 10px; right: 10px; }
+.floating.br { right: 10px; bottom: 10px; }
+.sim-status { display: inline-flex; align-items: center; min-height: 26px; padding: 0 8px; border-radius: var(--r-control); background: var(--control); border: 1px solid var(--control-border); color: var(--text-muted); font-size: 11px; }
+.popover { position: absolute; left: 10px; top: 46px; z-index: 3; width: min(300px, calc(100% - 20px)); padding: 12px; border: 1px solid var(--control-border); border-radius: var(--r-control); background: var(--mask); box-shadow: 0 18px 48px rgba(0, 0, 0, .3); display: flex; flex-direction: column; gap: 8px; }
+.tabs { display: flex; border-bottom: 1px solid var(--border); }
+.tab { flex: 1; min-height: 38px; border: 0; border-bottom: 2px solid transparent; background: none; color: var(--text-muted); cursor: pointer; font-size: 10px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
+.tab[aria-selected="true"] { color: var(--text); border-bottom-color: var(--accent); }
+.panel { flex: 1; min-height: 0; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 12px; }
+.panel h2 { margin: 0; font-size: 14px; font-weight: 600; line-height: 1.4; overflow-wrap: anywhere; }
+.panel p { margin: 0; color: var(--text-muted); overflow-wrap: anywhere; }
+.field { display: flex; flex-direction: column; gap: 4px; }
+.field input, .field select, .field textarea, .popover input, .popover select { width: 100%; min-height: 32px; padding: 6px 8px; border: 1px solid var(--control-border); border-radius: var(--r-control); background: var(--mask); }
+.field textarea { min-height: 64px; resize: vertical; }
+.row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.row > .grow { flex: 1; min-width: 120px; }
+.chip { display: inline-flex; align-items: center; gap: 6px; min-height: 24px; padding: 0 8px; border: 1px solid var(--control-border); border-radius: 999px; background: none; color: var(--control-text); font-size: 11px; cursor: pointer; }
+.chip[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+.chip.static { cursor: default; }
+.list { display: flex; flex-direction: column; gap: 4px; margin: 0; padding: 0; list-style: none; }
+.link { display: block; width: 100%; padding: 5px 8px; border: 1px solid var(--border); border-radius: var(--r-control); background: none; text-align: left; cursor: pointer; color: var(--control-text); overflow-wrap: anywhere; }
+.link:hover { border-color: var(--accent); }
+.link b { font-weight: 600; color: var(--text); }
+.link em { font-style: normal; color: var(--text-muted); }
+pre.code { margin: 0; padding: 12px; border: 1px solid var(--border); border-radius: var(--r-control); background: var(--mask); overflow: auto; font-size: 11px; line-height: 1.5; white-space: pre; tab-size: 2; flex: 1; min-height: 160px; }
+textarea.source { flex: 1; min-height: 240px; width: 100%; padding: 12px; border: 1px solid var(--control-border); border-radius: var(--r-control); background: var(--mask); font-size: 11px; line-height: 1.5; white-space: pre; resize: none; }
+.diag { padding: 6px 8px; border-left: 2px solid var(--warn); background: color-mix(in srgb, var(--warn) 8%, transparent); border-radius: 0 var(--r-precise) var(--r-precise) 0; overflow-wrap: anywhere; }
+.diag.error { border-left-color: var(--bad); background: color-mix(in srgb, var(--bad) 8%, transparent); }
+.diag.ok { border-left-color: var(--good); background: color-mix(in srgb, var(--good) 8%, transparent); }
+.task { display: flex; flex-direction: column; gap: 4px; width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--r-control); background: none; text-align: left; cursor: pointer; }
+.task:hover { border-color: var(--accent); }
+.task .head { display: flex; gap: 8px; align-items: baseline; }
+.task .id { color: var(--accent); font-weight: 700; font-size: 11px; flex: none; }
+.task .title { color: var(--text); overflow-wrap: anywhere; }
+.task .meta { color: var(--text-muted); font-size: 11px; }
+.phase { display: flex; align-items: baseline; gap: 8px; margin-top: 4px; }
+.phase b { font-size: 12px; font-weight: 600; }
+.stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.stat { padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--r-control); }
+.stat b { display: block; font-size: 18px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.legend-svg { width: 100%; height: auto; }
+.toast { position: fixed; left: 50%; bottom: calc(18px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); padding: 8px 14px; border: 1px solid var(--control-border); border-radius: var(--r-control); background: var(--mask); z-index: 20; box-shadow: 0 18px 48px rgba(0, 0, 0, .3); }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+@media (max-width: 1100px) { .work { grid-template-columns: 200px minmax(0, 1fr) 320px; } }
+@media (max-width: 860px) {
+  html, body { height: auto; }
+  .app { height: auto; }
+  .work { grid-template-columns: minmax(0, 1fr); }
+  .rail { flex-direction: row; overflow-x: auto; overflow-y: hidden; gap: 16px; }
+  .rail section { flex-direction: row; align-items: center; flex: none; }
+  .rail .elements { display: none; }
+  .view-link { width: auto; white-space: nowrap; }
+  .stage { height: 62vh; min-height: 320px; }
+  .side { min-height: 420px; max-height: 80vh; }
+  .btn, .tab { min-height: 2.75rem; }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="app" id="app">
+  <header class="bar">
+    <div class="brand"><h1>Archify Enterprise Studio</h1><span id="model-title"></span></div>
+    <button class="btn" id="theme-btn" type="button" title="Switch theme">Theme: <span id="theme-name">auto</span></button>
+    <button class="btn" id="export-svg" type="button" title="Copy this view as SVG">Copy SVG</button>
+    <button class="btn" id="reset-btn" type="button" title="Load the bundled example model">Load example</button>
+  </header>
+  <main class="work">
+    <nav class="pane rail" id="rail" aria-label="Views and elements"></nav>
+    <section class="pane stage" aria-label="Diagram">
+      <div class="floating tl" id="canvas-tools"></div>
+      <div class="popover" id="add-popover" hidden></div>
+      <div class="canvas" id="canvas"><div class="canvas-inner" id="canvas-inner"></div></div>
+      <div class="floating br">
+        <button class="btn small" id="zoom-out" type="button" aria-label="Zoom out">−</button>
+        <button class="btn small" id="zoom-fit" type="button">Fit</button>
+        <button class="btn small" id="zoom-in" type="button" aria-label="Zoom in">+</button>
+      </div>
+    </section>
+    <aside class="pane side" aria-label="Details">
+      <div class="tabs" role="tablist" id="tabs"></div>
+      <div class="panel" id="panel" role="tabpanel"></div>
+    </aside>
+  </main>
+</div>
+<div class="toast" id="toast" role="status" hidden></div>
+
+<script type="module">
+/*__BUNDLE__*/
+{
+const EXAMPLE = /*__EXAMPLE__*/null;
+const STORE_KEY = 'archify-enterprise-studio:model:v1';
+const $ = (id) => document.getElementById(id);
+const h = (tag, attrs = {}, ...children) => {
+  const node = document.createElement(tag);
+  for (const [key, value] of Object.entries(attrs)) {
+    if (value === false || value === undefined || value === null) continue;
+    if (key === 'class') node.className = value;
+    else if (key === 'text') node.textContent = value;
+    else if (key.startsWith('on')) node.addEventListener(key.slice(2), value);
+    else if (key === 'value') node.value = value;
+    else node.setAttribute(key, value === true ? '' : value);
+  }
+  for (const child of children.flat(Infinity)) if (child !== null && child !== undefined && child !== false) node.append(child);
+  return node;
+};
+
+// Native append() stringifies arrays and null; this accepts the same children as h().
+const add = (parent, ...children) => parent.append(...children.flat(Infinity).filter((child) => child !== null && child !== undefined && child !== false));
+
+// A stored model that no longer validates is never thrown away: it is handed
+// back as text so the Model tab can show it for repair.
+function loadStored() {
+  let raw = null;
+  try { raw = localStorage.getItem(STORE_KEY); } catch (error) { return {}; }
+  if (!raw) return {};
+  try { const parsed = JSON.parse(raw); if (validateModel(parsed).ok) return { model: parsed }; } catch (error) { /* fall through with the raw text */ }
+  return { rejected: raw };
+}
+const stored = loadStored();
+const state = {
+  model: stored.model || structuredClone(EXAMPLE),
+  viewId: null, tab: stored.rejected ? 'model' : 'inspect', selected: null, // selected: { type: 'element' | 'relationship', id }
+  codeTarget: 'typescript', codeFile: 0, phase: 'all', query: '', preset: null,
+  zoom: 1, panX: 0, panY: 0, fitted: false, run: null, adding: false, sourceDraft: stored.rejected || null,
+  sourceError: stored.rejected ? [{ severity: 'error', message: 'Your saved model has errors, so the example is shown instead. Your JSON is below: fix it and press Apply, or press Discard edits to drop it.' }] : null,
+};
+
+function viewSlug(id) { return id.replace(/_/g, '-'); }
+function initialView() {
+  const wanted = location.hash.replace(/^#/, '');
+  return (state.model.views.find((view) => viewSlug(view.id) === wanted) || state.model.views[0])?.id || null;
+}
+state.viewId = initialView();
+
+const currentView = () => state.model.views.find((view) => view.id === state.viewId) || state.model.views[0];
+const elementById = (id) => state.model.elements.find((element) => element.id === id);
+function effectiveTheme() {
+  if (state.preset === 'blueprint') return 'blueprint';
+  const explicit = document.documentElement.dataset.theme;
+  if (explicit === 'dark' || explicit === 'light') return explicit;
+  return matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+}
+
+let toastTimer;
+function toast(message) {
+  const node = $('toast'); node.textContent = message; node.hidden = false;
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => { node.hidden = true; }, 2200);
+}
+async function copyText(text, what) {
+  try { await navigator.clipboard.writeText(text); toast(`Copied ${what}`); }
+  catch (error) {
+    const area = h('textarea', { class: 'sr' }); area.value = text; document.body.append(area); area.select();
+    let ok = false; try { ok = document.execCommand('copy'); } catch (inner) { ok = false; }
+    area.remove(); toast(ok ? `Copied ${what}` : 'Copy was blocked. Select the text and copy it manually.');
+  }
+}
+
+// Removing things can empty a view. A view with nothing to draw is invalid,
+// so it goes too; the last remaining view is never removed.
+function viewIsDrawable(view) {
+  return view.type === 'sequence'
+    ? (view.participants || []).length >= 2 && (view.messages || []).length >= 1
+    : (view.nodes || []).length >= 1;
+}
+function wouldEmptyModel(change) {
+  const trial = structuredClone(state.model); change(trial);
+  return !trial.views.some(viewIsDrawable);
+}
+function pruneViews() {
+  const dropped = state.model.views.filter((view) => !viewIsDrawable(view));
+  if (!dropped.length) return '';
+  state.model.views = state.model.views.filter(viewIsDrawable);
+  if (!state.model.views.some((view) => view.id === state.viewId)) { state.viewId = state.model.views[0].id; state.fitted = false; }
+  return ` Removed ${dropped.length === 1 ? `the now-empty view "${dropped[0].title}"` : `${dropped.length} now-empty views`}.`;
+}
+
+function commit(message) {
+  const pruned = pruneViews();
+  if (message && pruned) message += pruned;
+  try { localStorage.setItem(STORE_KEY, JSON.stringify(state.model)); } catch (error) { /* storage unavailable */ }
+  state.sourceDraft = null; state.sourceError = null; state.run = null;
+  renderAll();
+  if (message) toast(message);
+}
+
+// ---- Rail -------------------------------------------------------------------
+function renderRail() {
+  const rail = $('rail'); rail.replaceChildren();
+  const families = new Map();
+  for (const view of state.model.views) {
+    const family = VIEW_TYPES[view.type].family;
+    families.set(family, [...(families.get(family) || []), view]);
+  }
+  for (const [family, views] of families) {
+    add(rail, h('section', {}, h('div', { class: 'label', text: family }), views.map((view) => h('button', {
+      class: 'view-link', type: 'button', 'aria-current': view.id === state.viewId ? 'true' : 'false', title: VIEW_TYPES[view.type].label,
+      onclick: () => selectView(view.id),
+    }, h('span', { text: view.title }), h('small', { text: view.type })))));
+  }
+  const query = state.query.trim().toLowerCase();
+  const matches = state.model.elements.filter((element) => !query || element.label.toLowerCase().includes(query) || element.kind.includes(query) || element.id.toLowerCase().includes(query)).slice(0, 60);
+  const search = h('input', { class: 'search', id: 'element-search', type: 'search', placeholder: 'Find element…', 'aria-label': 'Find element', value: state.query, oninput: (event) => { state.query = event.target.value; renderRail(); $('element-search').focus(); } });
+  add(rail, h('section', { class: 'elements' }, h('div', { class: 'label', text: `Repository · ${state.model.elements.length}` }), search,
+    matches.map((element) => h('button', { class: 'view-link', type: 'button', style: `--tone: var(--${toneOf(element)})`, onclick: () => focusElement(element.id) }, h('span', { class: 'dot' }), h('span', { text: element.label || element.kind }), h('small', { text: KINDS[element.kind].label.split(' ').pop() })))));
+}
+
+function selectView(id) {
+  state.viewId = id; state.selected = null; state.fitted = false; state.run = null; state.adding = false;
+  try { history.replaceState(null, '', `#${viewSlug(id)}`); } catch (error) { location.hash = viewSlug(id); }
+  renderAll();
+}
+function focusElement(id) {
+  const view = currentView();
+  const here = view.type === 'sequence' ? (view.participants || []).includes(id) : (view.nodes || []).some((node) => node.ref === id);
+  if (!here) { const other = viewsOfElement(state.model, id)[0]; if (other) { state.viewId = other.id; state.fitted = false; state.run = null; } }
+  state.selected = { type: 'element', id }; state.tab = 'inspect';
+  renderAll();
+}
+
+// ---- Canvas -----------------------------------------------------------------
+let rendered = null;
+function renderCanvas() {
+  const view = currentView();
+  const inner = $('canvas-inner');
+  if (!view) { inner.replaceChildren(); return; }
+  try { rendered = renderView(state.model, view.id, { theme: effectiveTheme() }); }
+  catch (error) { inner.replaceChildren(h('p', { class: 'diag error', text: error.message })); return; }
+  inner.innerHTML = rendered.svg;
+  const svg = inner.querySelector('svg');
+  if (!state.fitted) fit();
+  applyTransform();
+  applySelection(svg);
+  drawTokens(svg);
+  renderCanvasTools();
+}
+function fit() {
+  const canvas = $('canvas');
+  const scale = Math.min(1.4, (canvas.clientWidth - 24) / rendered.width, (canvas.clientHeight - 24) / rendered.height);
+  state.zoom = Math.max(0.2, scale || 1);
+  state.panX = Math.max(12, (canvas.clientWidth - rendered.width * state.zoom) / 2);
+  state.panY = Math.max(12, (canvas.clientHeight - rendered.height * state.zoom) / 2);
+  state.fitted = true;
+}
+function applyTransform() { $('canvas-inner').style.transform = `translate(${state.panX}px, ${state.panY}px) scale(${state.zoom})`; }
+function zoomBy(factor, cx, cy) {
+  const canvas = $('canvas'); const rect = canvas.getBoundingClientRect();
+  const x = (cx ?? rect.left + rect.width / 2) - rect.left; const y = (cy ?? rect.top + rect.height / 2) - rect.top;
+  const next = Math.min(3, Math.max(0.2, state.zoom * factor));
+  state.panX = x - ((x - state.panX) * next) / state.zoom; state.panY = y - ((y - state.panY) * next) / state.zoom; state.zoom = next;
+  applyTransform();
+}
+function applySelection(svg) {
+  if (!svg) return;
+  svg.classList.toggle('has-focus', Boolean(state.selected));
+  for (const node of svg.querySelectorAll('.ea-node, .ea-edge')) node.classList.remove('is-selected', 'is-linked');
+  if (!state.selected) return;
+  if (state.selected.type === 'element') {
+    for (const node of svg.querySelectorAll('.ea-node')) if (node.dataset.id === state.selected.id) node.classList.add('is-selected');
+    for (const edge of svg.querySelectorAll('.ea-edge')) {
+      if (edge.dataset.from !== state.selected.id && edge.dataset.to !== state.selected.id) continue;
+      edge.classList.add('is-linked');
+      const other = edge.dataset.from === state.selected.id ? edge.dataset.to : edge.dataset.from;
+      for (const node of svg.querySelectorAll('.ea-node')) if (node.dataset.id === other) node.classList.add('is-linked');
+    }
+  } else {
+    for (const edge of svg.querySelectorAll('.ea-edge')) {
+      if (edge.dataset.id !== state.selected.id) continue;
+      edge.classList.add('is-selected');
+      for (const node of svg.querySelectorAll('.ea-node')) if (node.dataset.id === edge.dataset.from || node.dataset.id === edge.dataset.to) node.classList.add('is-linked');
+    }
+  }
+}
+
+// Pointer handling: drag the background to pan, drag a node to move it on the grid.
+const pointer = { mode: null, startX: 0, startY: 0, moved: false, target: null, origin: null };
+function gridTarget(x, y) {
+  const layout = rendered.layout;
+  const axis = (key, center, value) => {
+    const known = new Map(); for (const node of layout.nodes) if (Number.isInteger(node[key])) known.set(node[key], node[center]);
+    const indexes = [...known.keys()].sort((a, b) => a - b);
+    if (!indexes.length) return 0;
+    const pitch = indexes.length > 1 ? (known.get(indexes[indexes.length - 1]) - known.get(indexes[0])) / (indexes[indexes.length - 1] - indexes[0]) : 200;
+    const first = known.get(indexes[0]) - indexes[0] * pitch;
+    let best = 0; let distance = Infinity;
+    for (let index = 0; index <= indexes[indexes.length - 1] + 1; index += 1) {
+      const at = known.get(index) ?? first + index * pitch;
+      if (Math.abs(at - value) < distance) { distance = Math.abs(at - value); best = index; }
+    }
+    return best;
+  };
+  return { row: axis('row', 'cy', y), col: axis('col', 'cx', x) };
+}
+$('canvas').addEventListener('pointerdown', (event) => {
+  if (event.button !== 0) return;
+  const nodeEl = event.target.closest('.ea-node'); const view = currentView();
+  pointer.startX = event.clientX; pointer.startY = event.clientY; pointer.moved = false;
+  pointer.target = event.target.closest('.ea-node, .ea-edge');
+  if (nodeEl && view.type !== 'sequence' && !state.run) { pointer.mode = 'node'; pointer.origin = nodeEl; }
+  else { pointer.mode = 'pan'; pointer.origin = { x: state.panX, y: state.panY }; }
+  $('canvas').setPointerCapture(event.pointerId);
+});
+$('canvas').addEventListener('pointermove', (event) => {
+  if (!pointer.mode) return;
+  const dx = event.clientX - pointer.startX; const dy = event.clientY - pointer.startY;
+  if (!pointer.moved && Math.hypot(dx, dy) < 5) return;
+  pointer.moved = true;
+  if (pointer.mode === 'pan') { state.panX = pointer.origin.x + dx; state.panY = pointer.origin.y + dy; $('canvas').classList.add('is-panning'); applyTransform(); }
+  else pointer.origin.setAttribute('transform', `translate(${dx / state.zoom} ${dy / state.zoom})`);
+});
+$('canvas').addEventListener('pointerup', (event) => {
+  const { mode, moved, target } = pointer; pointer.mode = null; $('canvas').classList.remove('is-panning');
+  if (!mode) return;
+  if (mode === 'node' && moved) {
+    const id = pointer.origin.dataset.id; const view = currentView();
+    const node = rendered.layout.nodes.find((entry) => entry.id === id);
+    const cell = gridTarget(node.cx + (event.clientX - pointer.startX) / state.zoom, node.cy + (event.clientY - pointer.startY) / state.zoom);
+    const placement = view.nodes.find((entry) => entry.ref === id);
+    const occupant = view.nodes.find((entry) => entry !== placement && entry.row === cell.row && entry.col === cell.col);
+    if (occupant) { occupant.row = placement.row; occupant.col = placement.col; }
+    placement.row = cell.row; placement.col = cell.col;
+    state.selected = { type: 'element', id };
+    commit(occupant ? 'Swapped cells' : `Moved to row ${cell.row}, col ${cell.col}`);
+    return;
+  }
+  if (moved) return;
+  if (!target) { state.selected = null; }
+  else if (target.classList.contains('ea-node')) {
+    if (state.run && tryFire(target.dataset.id)) return;
+    state.selected = { type: 'element', id: target.dataset.id };
+  } else if (target.dataset.id) state.selected = { type: 'relationship', id: target.dataset.id };
+  state.tab = 'inspect';
+  applySelection($('canvas-inner').querySelector('svg')); renderPanel();
+});
+$('canvas').addEventListener('wheel', (event) => { event.preventDefault(); zoomBy(event.deltaY < 0 ? 1.12 : 1 / 1.12, event.clientX, event.clientY); }, { passive: false });
+$('canvas').addEventListener('keydown', (event) => {
+  const node = event.target.closest?.('.ea-node');
+  if (node && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); state.selected = { type: 'element', id: node.dataset.id }; state.tab = 'inspect'; applySelection($('canvas-inner').querySelector('svg')); renderPanel(); }
+  if (event.key === 'Escape') { state.selected = null; applySelection($('canvas-inner').querySelector('svg')); renderPanel(); }
+});
+$('zoom-in').addEventListener('click', () => zoomBy(1.2));
+$('zoom-out').addEventListener('click', () => zoomBy(1 / 1.2));
+$('zoom-fit').addEventListener('click', () => { fit(); applyTransform(); });
+
+// ---- Simulation -------------------------------------------------------------
+const executable = (view) => ['activity', 'bpmn', 'state'].includes(view.type);
+function drawTokens(svg) {
+  const layer = svg?.querySelector('.ea-tokens'); if (!layer) return;
+  layer.replaceChildren();
+  for (const node of svg.querySelectorAll('.ea-node')) node.classList.remove('is-enabled');
+  if (!state.run || rendered.layout.kind !== 'grid') return;
+  for (const flowId of state.run.tokens) {
+    const edge = rendered.layout.edges.find((entry) => entry.id === flowId); if (!edge) continue;
+    const points = edge.points; const total = points.slice(1).reduce((sum, point, index) => sum + Math.hypot(point[0] - points[index][0], point[1] - points[index][1]), 0);
+    let remaining = total / 2; let at = points[0];
+    for (let index = 1; index < points.length; index += 1) {
+      const length = Math.hypot(points[index][0] - points[index - 1][0], points[index][1] - points[index - 1][1]);
+      if (remaining <= length) { const t = length ? remaining / length : 0; at = [points[index - 1][0] + (points[index][0] - points[index - 1][0]) * t, points[index - 1][1] + (points[index][1] - points[index - 1][1]) * t]; break; }
+      remaining -= length;
+    }
+    const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+    dot.setAttribute('class', 'ea-token'); dot.setAttribute('cx', at[0]); dot.setAttribute('cy', at[1]); dot.setAttribute('r', 6);
+    layer.append(dot);
+  }
+  for (const entry of enabled(state.run)) for (const node of svg.querySelectorAll('.ea-node')) if (node.dataset.id === entry.node) node.classList.add('is-enabled');
+}
+function tryFire(nodeId) {
+  const entry = enabled(state.run).find((item) => item.node === nodeId);
+  if (!entry) return false;
+  if (entry.choices.length > 1) { state.pendingChoice = entry; renderCanvasTools(); return true; }
+  fire(state.run, nodeId, entry.choices[0]); state.pendingChoice = null;
+  drawTokens($('canvas-inner').querySelector('svg')); renderCanvasTools(); renderPanel();
+  return true;
+}
+function stepRun() {
+  const next = enabled(state.run)[0]; if (!next) return;
+  tryFire(next.node);
+}
+function renderCanvasTools() {
+  const tools = $('canvas-tools'); const view = currentView(); tools.replaceChildren();
+  if (!view) return;
+  if (view.type !== 'sequence') add(tools, h('button', { class: 'btn small', type: 'button', 'aria-pressed': state.adding ? 'true' : 'false', onclick: () => { state.adding = !state.adding; renderAddPopover(); renderCanvasTools(); } }, '+ Element'));
+  if (executable(view)) {
+    if (!state.run) add(tools, h('button', { class: 'btn small', type: 'button', onclick: () => { state.run = createRun(state.model, view.id); state.pendingChoice = null; state.selected = null; renderCanvas(); renderPanel(); } }, '▶ Run tokens'));
+    else {
+      const ready = enabled(state.run);
+      add(tools, 
+        h('button', { class: 'btn small', type: 'button', disabled: !ready.length || Boolean(state.pendingChoice), onclick: stepRun }, 'Step'),
+        h('button', { class: 'btn small', type: 'button', onclick: () => { state.run = createRun(state.model, view.id); state.pendingChoice = null; renderCanvas(); renderPanel(); } }, 'Restart'),
+        h('button', { class: 'btn small', type: 'button', onclick: () => { state.run = null; state.pendingChoice = null; renderCanvas(); renderPanel(); } }, 'Stop'),
+        h('span', { class: 'sim-status', text: state.run.done ? `Completed in ${state.run.steps} steps` : ready.length ? `Step ${state.run.steps} · ${state.run.tokens.length} token${state.run.tokens.length === 1 ? '' : 's'} · click a dashed node` : 'Deadlock: tokens are waiting' }),
+      );
+      if (state.pendingChoice) {
+        add(tools, h('span', { class: 'sim-status', text: 'Choose a branch:' }), state.pendingChoice.choices.map((flowId) => {
+          const rel = state.model.relationships.find((entry) => entry.id === flowId);
+          return h('button', { class: 'btn small', type: 'button', onclick: () => { fire(state.run, state.pendingChoice.node, flowId); state.pendingChoice = null; drawTokens($('canvas-inner').querySelector('svg')); renderCanvasTools(); renderPanel(); } }, rel.label || rel.guard || elementById(rel.to).label);
+        }));
+      }
+    }
+  }
+}
+
+// ---- Add element ------------------------------------------------------------
+const VIEW_KINDS = {
+  archimate: (spec) => spec.family === 'archimate', bpmn: (spec) => spec.family === 'bpmn',
+  activity: (spec, kind) => ['initial', 'final', 'action', 'decision', 'merge', 'fork', 'join', 'object-node'].includes(kind),
+  state: (spec, kind) => ['initial', 'final', 'state', 'choice'].includes(kind),
+  usecase: (spec, kind) => ['actor', 'usecase'].includes(kind), class: (spec) => spec.shape === 'classifier',
+  component: (spec, kind) => ['component', 'package', 'interface', 'artifact'].includes(kind),
+  deployment: (spec, kind) => ['execution-node', 'device', 'artifact', 'component', 'node'].includes(kind),
+};
+const DEFAULT_REL = { archimate: 'serving', bpmn: 'sequence-flow', activity: 'control-flow', state: 'transition', usecase: 'association', class: 'association', component: 'dependency', deployment: 'association' };
+function uniqueId(base) {
+  const taken = new Set([...state.model.elements, ...state.model.relationships, ...state.model.views].map((entry) => entry.id));
+  let id = base.replace(/[^A-Za-z0-9_]+/g, '_').replace(/^[^A-Za-z]+/, '') || 'item'; let index = 2;
+  while (taken.has(id)) { id = `${base}_${index}`; index += 1; }
+  return id;
+}
+function renderAddPopover() {
+  const pop = $('add-popover'); const view = currentView();
+  pop.hidden = !state.adding; pop.replaceChildren();
+  if (!state.adding) return;
+  const kinds = Object.entries(KINDS).filter(([kind, spec]) => (VIEW_KINDS[view.type] || (() => true))(spec, kind));
+  const kindSelect = h('select', { id: 'add-kind', 'aria-label': 'Element kind' }, kinds.map(([kind, spec]) => h('option', { value: kind, text: `${spec.label}${spec.family === 'archimate' ? ` · ${LAYERS[spec.layer].label}` : ''}` })));
+  const labelInput = h('input', { id: 'add-label', type: 'text', placeholder: 'Label', 'aria-label': 'Element label' });
+  const submit = () => {
+    const label = labelInput.value.trim(); if (!label) { labelInput.focus(); return; }
+    const id = uniqueId(snake(label));
+    state.model.elements.push({ id, kind: kindSelect.value, label });
+    const rows = view.nodes.map((node) => Math.round(node.row)); const row = rows.length ? Math.max(...rows) : 0;
+    const cols = view.nodes.filter((node) => Math.round(node.row) === row).map((node) => Math.ceil(node.col));
+    view.nodes.push({ ref: id, row, col: cols.length ? Math.max(...cols) + 1 : 0 });
+    state.adding = false; state.selected = { type: 'element', id }; state.tab = 'inspect'; state.fitted = false;
+    commit(`Added ${label}. Drag it to another cell if needed.`);
+  };
+  labelInput.addEventListener('keydown', (event) => { if (event.key === 'Enter') submit(); });
+  add(pop, h('div', { class: 'label', text: `Add to ${VIEW_TYPES[view.type].label}` }), kindSelect, labelInput,
+    h('div', { class: 'row' }, h('button', { class: 'btn small', type: 'button', onclick: submit }, 'Add element'), h('button', { class: 'btn small', type: 'button', onclick: () => { state.adding = false; renderAddPopover(); renderCanvasTools(); } }, 'Cancel')));
+  labelInput.focus();
+}
+
+// ---- Panel ------------------------------------------------------------------
+const TABS = [['inspect', 'Inspect'], ['code', 'Code'], ['tasks', 'Tasks'], ['model', 'Model']];
+function renderTabs() {
+  $('tabs').replaceChildren(...TABS.map(([id, label]) => h('button', { class: 'tab', type: 'button', role: 'tab', 'aria-selected': state.tab === id ? 'true' : 'false', onclick: () => { state.tab = id; renderTabs(); renderPanel(); } }, label)));
+}
+const field = (label, control) => h('label', { class: 'field' }, h('span', { class: 'label', text: label }), control);
+function relationSentence(rel, perspective) {
+  const from = elementById(rel.from); const to = elementById(rel.to);
+  const other = perspective === rel.from ? to : from;
+  return h('button', { class: 'link', type: 'button', onclick: () => focusElement(other.id) },
+    perspective === rel.from ? [h('em', { text: `${RELATIONS[rel.kind].verb} ` }), h('b', { text: to.label || to.kind })] : [h('b', { text: from.label || from.kind }), h('em', { text: ` ${RELATIONS[rel.kind].verb} this` })],
+    rel.label ? h('em', { text: ` · ${rel.label}` }) : null);
+}
+
+function renderInspect(panel) {
+  const view = currentView();
+  if (state.run) {
+    add(panel, h('div', { class: 'label', text: 'Token run' }), h('h2', { text: view.title }),
+      h('p', { text: 'Tokens sit on flows. A dashed node can fire: click it, or press Step. Decisions follow their guards; when a guard cannot be evaluated you choose the branch.' }),
+      h('div', { class: 'row' }, Object.entries(state.run.vars).map(([name, value]) => h('span', { class: 'chip static', text: `${name} = ${value}` }))),
+      h('ol', { class: 'list' }, state.run.log.map((entry) => h('li', { class: 'link', text: `${entry.step}. ${entry.label}` }))));
+    return;
+  }
+  if (!state.selected) {
+    const result = validateModel(state.model);
+    const plan = generateTasks(state.model);
+    add(panel, h('div', { class: 'label', text: [VIEW_TYPES[view.type].label, view.viewpoint].filter(Boolean).join(' · ') }), h('h2', { text: view.title }),
+      h('p', { text: 'Select a node or relationship to inspect and edit it. Drag a node to move it on the grid. Every view draws from one repository, so an element looks the same wherever it appears.' }),
+      h('div', { class: 'stats' },
+        h('div', { class: 'stat' }, h('b', { text: String(state.model.elements.length) }), h('span', { class: 'label', text: 'Elements' })),
+        h('div', { class: 'stat' }, h('b', { text: String(state.model.relationships.length) }), h('span', { class: 'label', text: 'Relations' })),
+        h('div', { class: 'stat' }, h('b', { text: String(plan.totals.tasks) }), h('span', { class: 'label', text: 'Tasks' }))),
+      h('div', { class: 'label', text: 'Model check' }),
+      result.diagnostics.length ? result.diagnostics.slice(0, 8).map((entry) => h('div', { class: `diag ${entry.severity}`, text: entry.message })) : h('div', { class: 'diag ok', text: 'No problems found.' }));
+    if (rendered?.legend?.length) {
+      add(panel, h('div', { class: 'label', text: 'Relationships in this view' }), h('ul', { class: 'list' }, rendered.legend.map((entry) => h('li', { class: 'link', text: `${entry.label}: ${entry.verb}` }))));
+    }
+    return;
+  }
+  if (state.selected.type === 'relationship') {
+    const rel = state.model.relationships.find((entry) => entry.id === state.selected.id);
+    if (!rel) { state.selected = null; return renderInspect(panel); }
+    const kind = h('select', { id: 'rel-kind', onchange: (event) => { rel.kind = event.target.value; commit('Relationship updated'); } }, Object.entries(RELATIONS).map(([key, spec]) => h('option', { value: key, text: spec.label, selected: key === rel.kind })));
+    const label = h('input', { id: 'rel-label', type: 'text', value: rel.label || '', onchange: (event) => { if (event.target.value.trim()) rel.label = event.target.value.trim(); else delete rel.label; commit('Relationship updated'); } });
+    add(panel, h('div', { class: 'label', text: 'Relationship' }), h('h2', { text: `${elementById(rel.from).label || rel.from} ${RELATIONS[rel.kind].verb} ${elementById(rel.to).label || rel.to}` }),
+      field('Kind', kind), field('Label', label),
+      h('div', { class: 'row' },
+        h('button', { class: 'btn small', type: 'button', onclick: () => { [rel.from, rel.to] = [rel.to, rel.from]; commit('Direction reversed'); } }, 'Reverse direction'),
+        h('button', { class: 'btn small danger', type: 'button', onclick: () => { state.model.relationships = state.model.relationships.filter((entry) => entry !== rel); state.selected = null; commit('Relationship deleted'); } }, 'Delete')));
+    return;
+  }
+  const element = elementById(state.selected.id);
+  if (!element) { state.selected = null; return renderInspect(panel); }
+  const spec = KINDS[element.kind];
+  const label = h('input', { id: 'el-label', type: 'text', value: element.label, onchange: (event) => { element.label = event.target.value.trim() || element.label; commit('Label updated everywhere'); } });
+  const kind = h('select', { id: 'el-kind', onchange: (event) => { element.kind = event.target.value; commit('Kind updated everywhere'); } }, Object.entries(KINDS).map(([key, entry]) => h('option', { value: key, text: entry.label, selected: key === element.kind })));
+  const doc = h('textarea', { id: 'el-doc', placeholder: 'What this element is and why it exists', onchange: (event) => { if (event.target.value.trim()) element.doc = event.target.value.trim(); else delete element.doc; commit('Documentation saved'); } });
+  doc.value = element.doc || '';
+  add(panel, h('div', { class: 'row' }, h('span', { class: 'dot', style: `--tone: var(--${toneOf(element)})` }), h('span', { class: 'label', text: `${spec.label} · ${LAYERS[layerOf(element)].label}` })),
+    h('h2', { text: element.label || spec.label }), field('Label', label), field('Kind', kind), field('Documentation', doc));
+  if (spec.shape === 'classifier') {
+    const members = [...(element.attributes || []).map(attributeText), ...(element.methods || []).map(methodText)];
+    add(panel, h('div', { class: 'label', text: 'Members' }), members.length ? h('pre', { class: 'code', style: 'flex:none;min-height:0', text: members.join('\n') }) : h('p', { text: 'No members yet. Add attributes and methods in the Model tab.' }));
+  }
+  const out = state.model.relationships.filter((rel) => rel.from === element.id); const into = state.model.relationships.filter((rel) => rel.to === element.id);
+  if (out.length || into.length) add(panel, h('div', { class: 'label', text: 'Relationships' }), h('div', { class: 'list' }, out.map((rel) => relationSentence(rel, element.id)), into.map((rel) => relationSentence(rel, element.id))));
+  if (view.type !== 'sequence') {
+    const targets = view.nodes.map((node) => elementById(node.ref)).filter((entry) => entry && entry.id !== element.id);
+    const target = h('select', { id: 'connect-target', class: 'grow', 'aria-label': 'Connect to' }, targets.map((entry) => h('option', { value: entry.id, text: entry.label || entry.kind })));
+    const relKind = h('select', { id: 'connect-kind', class: 'grow', 'aria-label': 'Relationship kind' }, Object.entries(RELATIONS).map(([key, entry]) => h('option', { value: key, text: entry.label, selected: key === DEFAULT_REL[view.type] })));
+    if (targets.length) add(panel, h('div', { class: 'label', text: 'Connect to' }), h('div', { class: 'row field' }, relKind, target,
+      h('button', { class: 'btn small', type: 'button', onclick: () => { const id = uniqueId(`r_${element.id}_${target.value}`); state.model.relationships.push({ id, from: element.id, to: target.value, kind: relKind.value }); commit('Relationship added'); } }, 'Connect')));
+  }
+  const views = viewsOfElement(state.model, element.id);
+  add(panel, h('div', { class: 'label', text: `Appears in ${views.length} view${views.length === 1 ? '' : 's'}` }), h('div', { class: 'row' }, views.map((entry) => h('button', { class: 'chip', type: 'button', 'aria-pressed': entry.id === state.viewId ? 'true' : 'false', onclick: () => { state.viewId = entry.id; state.fitted = false; renderAll(); } }, entry.title))));
+  const tasks = generateTasks(state.model).tasks.filter((task) => task.trace.element === element.id);
+  if (tasks.length) add(panel, h('div', { class: 'label', text: 'Generated tasks' }), h('div', { class: 'list' }, tasks.map((task) => h('div', { class: 'link', text: `${task.id} · ${task.title}` }))));
+  add(panel, h('div', { class: 'row' },
+    view.type !== 'sequence' ? h('button', { class: 'btn small', type: 'button', onclick: () => {
+      const strip = (target) => { target.nodes = target.nodes.filter((node) => node.ref !== element.id); for (const group of target.groups || []) group.wraps = group.wraps.filter((ref) => ref !== element.id); target.groups = (target.groups || []).filter((group) => group.wraps.length); if (!target.groups.length) delete target.groups; };
+      if (wouldEmptyModel((trial) => strip(trial.views.find((entry) => entry.id === view.id)))) { toast('This is the last element of the only view, so it stays. Add another element first.'); return; }
+      strip(view); state.selected = null; commit('Removed from this view.');
+    } }, 'Remove from view') : null,
+    h('button', { class: 'btn small danger', type: 'button', onclick: () => deleteElement(element.id) }, 'Delete from model')));
+}
+function deleteElement(id) {
+  if (wouldEmptyModel((trial) => removeElement(trial, id))) { toast('This is the last element of the only view, so it stays. Add another element first.'); return; }
+  removeElement(state.model, id);
+  state.selected = null;
+  commit('Element deleted from the model.');
+}
+function removeElement(model, id) {
+  model.elements = model.elements.filter((element) => element.id !== id);
+  const gone = new Set(model.relationships.filter((rel) => rel.from === id || rel.to === id).map((rel) => rel.id));
+  model.relationships = model.relationships.filter((rel) => !gone.has(rel.id));
+  for (const view of model.views) {
+    if (view.nodes) view.nodes = view.nodes.filter((node) => node.ref !== id);
+    if (view.participants) { view.participants = view.participants.filter((ref) => ref !== id); view.messages = (view.messages || []).filter((message) => message.from !== id && message.to !== id); delete view.fragments; }
+    if (view.groups) { for (const group of view.groups) group.wraps = group.wraps.filter((ref) => ref !== id); view.groups = view.groups.filter((group) => group.wraps.length); if (!view.groups.length) delete view.groups; }
+    for (const key of ['relationships', 'exclude']) if (view[key]) view[key] = view[key].filter((rel) => !gone.has(rel));
+  }
+}
+
+function codeFilesFor(target) {
+  if (target === 'archify') return compileNative(state.model).map((entry) => ({ path: entry.path, content: `${JSON.stringify(entry.diagram, null, 2)}\n` }));
+  return generateCode(state.model, target);
+}
+function renderCode(panel) {
+  const targets = { ...CODE_TARGETS, archify: { label: 'Archify typed JSON', hint: 'Render with the native Archify CLI and Viewer' } };
+  let files = [];
+  try { files = codeFilesFor(state.codeTarget); } catch (error) { add(panel, h('div', { class: 'diag error', text: error.message })); return; }
+  if (state.codeFile >= files.length) state.codeFile = 0;
+  const select = h('select', { id: 'code-target', onchange: (event) => { state.codeTarget = event.target.value; state.codeFile = 0; renderPanel(); } }, Object.entries(targets).map(([key, entry]) => h('option', { value: key, text: entry.label, selected: key === state.codeTarget })));
+  add(panel, field('Generate', select), h('p', { text: targets[state.codeTarget].hint }));
+  if (!files.length) { add(panel, h('div', { class: 'diag', text: 'Nothing in this model maps to this target yet.' })); return; }
+  const file = files[state.codeFile];
+  add(panel, h('div', { class: 'row' }, files.map((entry, index) => h('button', { class: 'chip', type: 'button', 'aria-pressed': index === state.codeFile ? 'true' : 'false', onclick: () => { state.codeFile = index; renderPanel(); } }, entry.path.split('/').pop()))),
+    h('div', { class: 'row' }, h('span', { class: 'label grow', text: file.path }),
+      h('button', { class: 'btn small', type: 'button', onclick: () => copyText(file.content, file.path.split('/').pop()) }, 'Copy file'),
+      h('button', { class: 'btn small', type: 'button', onclick: () => copyText(files.map((entry) => `// ---- ${entry.path} ----\n${entry.content}`).join('\n'), `${files.length} files`) }, 'Copy all')),
+    h('pre', { class: 'code', tabindex: '0', text: file.content }));
+}
+
+function renderTasks(panel) {
+  const plan = generateTasks(state.model);
+  add(panel, h('div', { class: 'stats' },
+    h('div', { class: 'stat' }, h('b', { text: String(plan.totals.tasks) }), h('span', { class: 'label', text: 'Tasks' })),
+    h('div', { class: 'stat' }, h('b', { text: String(plan.totals.points) }), h('span', { class: 'label', text: 'Points' })),
+    h('div', { class: 'stat' }, h('b', { text: String(plan.totals.waves) }), h('span', { class: 'label', text: 'Waves' }))),
+    h('p', { text: 'Tasks come from the model and are grouped by TOGAF ADM phase. Dependencies follow the relationships you drew; a wave is a set of tasks that can run in parallel.' }),
+    h('div', { class: 'row' }, h('button', { class: 'chip', type: 'button', 'aria-pressed': state.phase === 'all' ? 'true' : 'false', onclick: () => { state.phase = 'all'; renderPanel(); } }, 'All'),
+      plan.phases.map((phase) => h('button', { class: 'chip', type: 'button', title: phase.label, 'aria-pressed': state.phase === phase.id ? 'true' : 'false', onclick: () => { state.phase = phase.id; renderPanel(); } }, `${phase.id} · ${phase.tasks.length}`))),
+    h('div', { class: 'row' },
+      h('button', { class: 'btn small', type: 'button', onclick: () => copyText(tasksMarkdown(plan), 'Markdown plan') }, 'Copy Markdown'),
+      h('button', { class: 'btn small', type: 'button', onclick: () => copyText(tasksCsv(plan), 'CSV') }, 'Copy CSV'),
+      h('button', { class: 'btn small', type: 'button', onclick: () => copyText(JSON.stringify(plan, null, 2), 'JSON') }, 'Copy JSON'),
+      h('button', { class: 'btn small', type: 'button', title: 'Agent program for the GOAL language', onclick: () => copyText(tasksGoal(plan).map((file) => `% ---- ${file.path} ----\n${file.content}`).join('\n'), 'GOAL agent program') }, 'Copy GOAL agent')));
+  for (const dropped of plan.droppedDependencies) add(panel, h('div', { class: 'diag', text: `Dependency cycle: ${dropped.task} no longer waits for ${dropped.dependsOn}.` }));
+  for (const phase of plan.phases) {
+    if (state.phase !== 'all' && state.phase !== phase.id) continue;
+    add(panel, h('div', { class: 'phase' }, h('span', { class: 'label', text: `Phase ${phase.id}` }), h('b', { text: phase.label })));
+    for (const task of plan.tasks.filter((entry) => entry.phase === phase.id)) {
+      add(panel, h('button', { class: 'task', type: 'button', title: task.acceptance.join('\n'), onclick: () => { if (task.trace.element) focusElement(task.trace.element); else if (task.trace.view) selectView(task.trace.view); } },
+        h('span', { class: 'head' }, h('span', { class: 'id', text: task.id }), h('span', { class: 'title', text: task.title })),
+        h('span', { class: 'meta', text: `${task.type} · ${task.estimate} pt · wave ${task.wave}${task.dependsOn.length ? ` · after ${task.dependsOn.join(', ')}` : ''}` })));
+    }
+  }
+}
+
+function renderModel(panel) {
+  const text = state.sourceDraft ?? JSON.stringify(state.model, null, 2);
+  const area = h('textarea', { class: 'source', id: 'model-source', spellcheck: 'false', 'aria-label': 'Model JSON', oninput: (event) => { state.sourceDraft = event.target.value; } });
+  area.value = text;
+  const apply = () => {
+    let parsed;
+    try { parsed = JSON.parse($('model-source').value); } catch (error) { state.sourceError = [{ severity: 'error', message: `Not valid JSON: ${error.message}` }]; renderPanel(); return; }
+    const result = validateModel(parsed);
+    if (!result.ok) { state.sourceError = result.diagnostics.filter((entry) => entry.severity === 'error'); renderPanel(); return; }
+    state.model = parsed; state.selected = null;
+    if (!parsed.views.some((view) => view.id === state.viewId)) state.viewId = parsed.views[0]?.id || null;
+    state.fitted = false;
+    commit('Model applied');
+  };
+  const fileInput = h('input', { id: 'model-file', type: 'file', accept: '.json,application/json', class: 'sr', 'aria-label': 'Open model file', onchange: async (event) => { const file = event.target.files[0]; if (!file) return; state.sourceDraft = await file.text(); renderPanel(); toast('File loaded. Press Apply to use it.'); } });
+  add(panel, h('p', { text: 'The model is typed JSON: elements, relationships, and views that place elements on a row/col grid. Edit it here, or hand the same file to the enterprise CLI.' }),
+    h('div', { class: 'row' }, h('button', { class: 'btn small', type: 'button', onclick: apply }, 'Apply'),
+      h('button', { class: 'btn small', type: 'button', onclick: () => copyText($('model-source').value, 'model JSON') }, 'Copy'),
+      h('button', { class: 'btn small', type: 'button', onclick: () => fileInput.click() }, 'Open file…'), fileInput,
+      state.sourceDraft !== null ? h('button', { class: 'btn small', type: 'button', onclick: () => commit('Edits discarded.') }, 'Discard edits') : null),
+    (state.sourceError || []).slice(0, 6).map((entry) => h('div', { class: 'diag error', text: entry.message })), area);
+}
+
+function renderPanel() {
+  const panel = $('panel'); const scroll = panel.scrollTop; panel.replaceChildren();
+  ({ inspect: renderInspect, code: renderCode, tasks: renderTasks, model: renderModel })[state.tab](panel);
+  panel.scrollTop = state.tab === 'inspect' ? 0 : scroll;
+}
+
+function renderAll() {
+  $('model-title').textContent = state.model.meta?.title || '';
+  $('theme-name').textContent = state.preset || document.documentElement.dataset.theme || 'auto';
+  renderRail(); renderCanvas(); renderAddPopover(); renderTabs(); renderPanel();
+}
+
+// ---- Chrome -----------------------------------------------------------------
+const THEME_CYCLE = ['auto', 'dark', 'light', 'blueprint'];
+let themeChoice = 'auto'; const hostTheme = document.documentElement.dataset.theme;
+$('theme-btn').addEventListener('click', () => {
+  themeChoice = THEME_CYCLE[(THEME_CYCLE.indexOf(themeChoice) + 1) % THEME_CYCLE.length];
+  const root = document.documentElement;
+  state.preset = themeChoice === 'blueprint' ? 'blueprint' : null;
+  if (state.preset) root.dataset.preset = 'blueprint'; else delete root.dataset.preset;
+  if (themeChoice === 'dark' || themeChoice === 'light') root.dataset.theme = themeChoice;
+  else if (themeChoice === 'blueprint') root.dataset.theme = 'dark';
+  else if (hostTheme) root.dataset.theme = hostTheme; else delete root.dataset.theme;
+  renderCanvas(); $('theme-name').textContent = themeChoice;
+});
+new MutationObserver(() => { if (themeChoice === 'auto') renderCanvas(); }).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+matchMedia('(prefers-color-scheme: light)').addEventListener('change', () => renderCanvas());
+$('export-svg').addEventListener('click', () => copyText(renderView(state.model, currentView().id, { theme: effectiveTheme() }).svg, 'SVG'));
+$('reset-btn').addEventListener('click', () => { state.model = structuredClone(EXAMPLE); state.viewId = state.model.views[0].id; state.selected = null; state.fitted = false; commit('Example model loaded'); });
+window.addEventListener('hashchange', () => { const next = initialView(); if (next && next !== state.viewId) selectView(next); });
+window.addEventListener('resize', () => { if (rendered) { fit(); applyTransform(); } });
+
+renderAll();
+}
+</script>

@@ -1,0 +1,431 @@
+{
+  "schema_version": 1,
+  "model_type": "enterprise",
+  "meta": {
+    "title": "Order-to-Cash Platform",
+    "subtitle": "One repository, twelve consistent views: motivation to deployment.",
+    "organization": "Northwind Retail",
+    "codegen": { "package": "com.northwind.orders", "namespace": "orders" }
+  },
+  "elements": [
+    { "id": "cfo", "kind": "stakeholder", "label": "CFO" },
+    { "id": "drv_cash", "kind": "driver", "label": "Slow cash collection" },
+    { "id": "goal_dso", "kind": "goal", "label": "Cut days sales outstanding by 30%" },
+    { "id": "out_auto", "kind": "outcome", "label": "90% of orders invoiced automatically" },
+    { "id": "prin_api", "kind": "principle", "label": "API-first integration" },
+    { "id": "req_pay", "kind": "requirement", "label": "Capture payment at checkout", "doc": "Card and wallet payments are authorised before an order is confirmed." },
+    { "id": "req_audit", "kind": "requirement", "label": "Auditable order history", "doc": "Every order state change is recorded with actor and time." },
+    { "id": "cap_fulfil", "kind": "capability", "label": "Order fulfilment" },
+
+    { "id": "customer", "kind": "business-actor", "label": "Customer" },
+    { "id": "sales_clerk", "kind": "business-role", "label": "Sales clerk" },
+    { "id": "bs_ordering", "kind": "business-service", "label": "Ordering service" },
+    { "id": "bp_o2c", "kind": "business-process", "label": "Order-to-cash" },
+    { "id": "bp_take", "kind": "business-process", "label": "Take order" },
+    { "id": "bp_bill", "kind": "business-process", "label": "Bill customer" },
+    { "id": "bo_order", "kind": "business-object", "label": "Sales order" },
+    { "id": "bo_invoice", "kind": "contract", "label": "Invoice" },
+
+    { "id": "web_shop", "kind": "application-component", "label": "Web Shop", "tech": "React + Next.js" },
+    { "id": "order_svc", "kind": "application-component", "label": "Order Service", "tech": "Node.js" },
+    { "id": "payment_svc", "kind": "application-component", "label": "Payment Service", "tech": "Kotlin" },
+    { "id": "billing_svc", "kind": "application-component", "label": "Billing Service", "tech": "Python" },
+    { "id": "crm", "kind": "application-component", "label": "CRM", "tech": "SaaS" },
+    { "id": "as_order", "kind": "application-service", "label": "Order management" },
+    { "id": "as_payment", "kind": "application-service", "label": "Payment processing" },
+    { "id": "as_invoice", "kind": "application-service", "label": "Invoicing" },
+    { "id": "ai_order_api", "kind": "application-interface", "label": "Order API", "tech": "REST / JSON",
+      "operations": [
+        { "method": "post", "path": "/orders", "summary": "Create an order", "request": "Order", "response": "Order" },
+        { "method": "get", "path": "/orders/{orderId}", "summary": "Fetch an order", "response": "Order" },
+        { "method": "post", "path": "/orders/{orderId}/payments", "summary": "Pay for an order", "request": "Payment", "response": "Payment" }
+      ] },
+    { "id": "ai_pay_api", "kind": "application-interface", "label": "Payment API", "tech": "gRPC" },
+    { "id": "do_order", "kind": "data-object", "label": "Order record" },
+    { "id": "do_invoice", "kind": "data-object", "label": "Invoice record" },
+    { "id": "ev_order_placed", "kind": "application-event", "label": "Order placed" },
+
+    { "id": "k8s", "kind": "node", "label": "Kubernetes cluster", "tech": "3 zones" },
+    { "id": "pg", "kind": "system-software", "label": "PostgreSQL 16" },
+    { "id": "kafka", "kind": "system-software", "label": "Kafka" },
+    { "id": "ts_db", "kind": "technology-service", "label": "Managed SQL" },
+    { "id": "ts_stream", "kind": "technology-service", "label": "Event streaming" },
+    { "id": "art_order", "kind": "artifact", "label": "order-service.jar" },
+    { "id": "art_pay", "kind": "artifact", "label": "payment-service.jar" },
+    { "id": "edge", "kind": "device", "label": "Edge gateway", "tech": "TLS termination" },
+
+    { "id": "plat_base", "kind": "plateau", "label": "Baseline: manual invoicing" },
+    { "id": "plat_target", "kind": "plateau", "label": "Target: automated O2C" },
+    { "id": "gap_billing", "kind": "gap", "label": "No billing integration" },
+    { "id": "wp_payments", "kind": "work-package", "label": "Launch payment service" },
+    { "id": "wp_billing", "kind": "work-package", "label": "Automate invoicing" },
+    { "id": "del_api", "kind": "deliverable", "label": "Payment API v1" },
+
+    { "id": "Order", "kind": "entity", "label": "Order",
+      "attributes": [
+        { "name": "id", "type": "uuid", "pk": true },
+        { "name": "customerId", "type": "uuid" },
+        { "name": "status", "type": "OrderStatus" },
+        { "name": "total", "type": "decimal" },
+        { "name": "placedAt", "type": "datetime" }
+      ],
+      "methods": [
+        { "name": "addLine", "parameters": "sku: string, quantity: int", "returns": "OrderLine" },
+        { "name": "markPaid", "parameters": "payment: Payment", "returns": "void" }
+      ] },
+    { "id": "OrderLine", "kind": "entity", "label": "OrderLine",
+      "attributes": [
+        { "name": "id", "type": "uuid", "pk": true },
+        { "name": "sku", "type": "string" },
+        { "name": "quantity", "type": "int" },
+        { "name": "unitPrice", "type": "decimal" }
+      ] },
+    { "id": "Payment", "kind": "entity", "label": "Payment",
+      "attributes": [
+        { "name": "id", "type": "uuid", "pk": true },
+        { "name": "amount", "type": "decimal" },
+        { "name": "method", "type": "PaymentMethod" },
+        { "name": "authorisedAt", "type": "datetime", "nullable": true }
+      ] },
+    { "id": "OrderStatus", "kind": "enum", "label": "OrderStatus",
+      "attributes": [ { "name": "DRAFT" }, { "name": "PLACED" }, { "name": "PAID" }, { "name": "SHIPPED" }, { "name": "CANCELLED" } ] },
+    { "id": "PaymentMethod", "kind": "enum", "label": "PaymentMethod",
+      "attributes": [ { "name": "CARD" }, { "name": "WALLET" } ] },
+    { "id": "PaymentGateway", "kind": "interface", "label": "PaymentGateway",
+      "methods": [ { "name": "authorise", "parameters": "payment: Payment", "returns": "boolean", "abstract": true } ] },
+    { "id": "CardGateway", "kind": "class", "label": "CardGateway",
+      "attributes": [ { "name": "merchantId", "type": "string", "visibility": "private" } ],
+      "methods": [ { "name": "authorise", "parameters": "payment: Payment", "returns": "boolean" } ] },
+    { "id": "WalletGateway", "kind": "class", "label": "WalletGateway",
+      "methods": [ { "name": "authorise", "parameters": "payment: Payment", "returns": "boolean" } ] },
+    { "id": "OrderService", "kind": "class", "label": "OrderService",
+      "attributes": [ { "name": "gateway", "type": "PaymentGateway", "visibility": "private" } ],
+      "methods": [
+        { "name": "placeOrder", "parameters": "order: Order", "returns": "Order" },
+        { "name": "pay", "parameters": "orderId: uuid, payment: Payment", "returns": "Payment" }
+      ] },
+
+    { "id": "uc_actor_customer", "kind": "actor", "label": "Customer" },
+    { "id": "uc_actor_clerk", "kind": "actor", "label": "Sales clerk" },
+    { "id": "uc_actor_psp", "kind": "actor", "label": "Payment provider" },
+    { "id": "uc_place", "kind": "usecase", "label": "Place order" },
+    { "id": "uc_pay", "kind": "usecase", "label": "Pay for order" },
+    { "id": "uc_track", "kind": "usecase", "label": "Track order" },
+    { "id": "uc_refund", "kind": "usecase", "label": "Refund payment" },
+    { "id": "uc_cancel", "kind": "usecase", "label": "Cancel order" },
+
+    { "id": "s_init", "kind": "initial", "label": "Start" },
+    { "id": "s_draft", "kind": "state", "label": "Draft" },
+    { "id": "s_placed", "kind": "state", "label": "Placed" },
+    { "id": "s_paid", "kind": "state", "label": "Paid" },
+    { "id": "s_shipped", "kind": "state", "label": "Shipped" },
+    { "id": "s_cancelled", "kind": "state", "label": "Cancelled" },
+    { "id": "s_final", "kind": "final", "label": "End" },
+
+    { "id": "a_init", "kind": "initial", "label": "Start" },
+    { "id": "a_validate", "kind": "action", "label": "Validate payment request" },
+    { "id": "a_risk", "kind": "decision", "label": "Risk check" },
+    { "id": "a_3ds", "kind": "action", "label": "Run 3-D Secure challenge" },
+    { "id": "a_merge", "kind": "merge", "label": "" },
+    { "id": "a_fork", "kind": "fork", "label": "Fork" },
+    { "id": "a_capture", "kind": "action", "label": "Capture funds" },
+    { "id": "a_receipt", "kind": "action", "label": "Send receipt" },
+    { "id": "a_join", "kind": "join", "label": "Join" },
+    { "id": "a_final", "kind": "final", "label": "End" },
+
+    { "id": "p_start", "kind": "start-event", "label": "Order received", "trigger": "message" },
+    { "id": "p_check", "kind": "task", "label": "Check stock", "taskType": "service" },
+    { "id": "p_gw_stock", "kind": "exclusive-gateway", "label": "In stock?" },
+    { "id": "p_pay", "kind": "task", "label": "Collect payment", "taskType": "service" },
+    { "id": "p_backorder", "kind": "task", "label": "Offer back-order", "taskType": "user" },
+    { "id": "p_split", "kind": "parallel-gateway", "label": "" },
+    { "id": "p_pick", "kind": "task", "label": "Pick and pack", "taskType": "manual" },
+    { "id": "p_invoice", "kind": "task", "label": "Issue invoice", "taskType": "send" },
+    { "id": "p_sync", "kind": "parallel-gateway", "label": "" },
+    { "id": "p_ship", "kind": "task", "label": "Ship order", "taskType": "user" },
+    { "id": "p_end", "kind": "end-event", "label": "Order fulfilled" },
+    { "id": "p_end_cancel", "kind": "end-event", "label": "Order cancelled", "trigger": "error" },
+
+    { "id": "c_gateway", "kind": "component", "label": "API Gateway" },
+    { "id": "c_orders", "kind": "component", "label": "orders-api" },
+    { "id": "c_payments", "kind": "component", "label": "payments-core" },
+    { "id": "c_ledger", "kind": "component", "label": "ledger" },
+    { "id": "c_notify", "kind": "component", "label": "notifier" },
+
+    { "id": "d_browser", "kind": "device", "label": "Customer browser" },
+    { "id": "d_cluster", "kind": "execution-node", "label": "k8s: prod-eu", "tech": "«executionEnvironment»" },
+    { "id": "d_db", "kind": "execution-node", "label": "RDS PostgreSQL", "tech": "Multi-AZ" },
+    { "id": "d_art_web", "kind": "artifact", "label": "web-shop:1.4" },
+    { "id": "d_art_orders", "kind": "artifact", "label": "orders-api:2.1" },
+    { "id": "d_art_pay", "kind": "artifact", "label": "payments-core:0.9" }
+  ],
+  "relationships": [
+    { "id": "r_cfo_drv", "from": "cfo", "to": "drv_cash", "kind": "association" },
+    { "id": "r_drv_goal", "from": "drv_cash", "to": "goal_dso", "kind": "influence", "label": "+" },
+    { "id": "r_out_goal", "from": "out_auto", "to": "goal_dso", "kind": "realization" },
+    { "id": "r_req_pay_out", "from": "req_pay", "to": "out_auto", "kind": "realization" },
+    { "id": "r_req_audit_out", "from": "req_audit", "to": "out_auto", "kind": "realization" },
+    { "id": "r_prin_req", "from": "prin_api", "to": "req_pay", "kind": "influence" },
+    { "id": "r_cap_out", "from": "cap_fulfil", "to": "out_auto", "kind": "realization" },
+    { "id": "r_pay_svc_req", "from": "payment_svc", "to": "req_pay", "kind": "realization" },
+    { "id": "r_order_svc_req", "from": "order_svc", "to": "req_audit", "kind": "realization" },
+
+    { "id": "r_bs_customer", "from": "bs_ordering", "to": "customer", "kind": "serving" },
+    { "id": "r_o2c_bs", "from": "bp_o2c", "to": "bs_ordering", "kind": "realization" },
+    { "id": "r_clerk_o2c", "from": "sales_clerk", "to": "bp_o2c", "kind": "assignment" },
+    { "id": "r_o2c_take", "from": "bp_o2c", "to": "bp_take", "kind": "composition" },
+    { "id": "r_o2c_bill", "from": "bp_o2c", "to": "bp_bill", "kind": "composition" },
+    { "id": "r_take_bill", "from": "bp_take", "to": "bp_bill", "kind": "triggering" },
+    { "id": "r_take_order", "from": "bp_take", "to": "bo_order", "kind": "access", "label": "creates" },
+    { "id": "r_bill_invoice", "from": "bp_bill", "to": "bo_invoice", "kind": "access", "label": "creates" },
+
+    { "id": "r_as_order_o2c", "from": "as_order", "to": "bp_o2c", "kind": "serving" },
+    { "id": "r_as_order_take", "from": "as_order", "to": "bp_take", "kind": "serving" },
+    { "id": "r_as_invoice_bill", "from": "as_invoice", "to": "bp_bill", "kind": "serving" },
+    { "id": "r_order_svc_as", "from": "order_svc", "to": "as_order", "kind": "realization" },
+    { "id": "r_pay_svc_as", "from": "payment_svc", "to": "as_payment", "kind": "realization" },
+    { "id": "r_billing_as", "from": "billing_svc", "to": "as_invoice", "kind": "realization" },
+    { "id": "r_as_pay_order", "from": "as_payment", "to": "order_svc", "kind": "serving" },
+    { "id": "r_order_api", "from": "order_svc", "to": "ai_order_api", "kind": "composition" },
+    { "id": "r_pay_api", "from": "payment_svc", "to": "ai_pay_api", "kind": "composition" },
+    { "id": "r_api_shop", "from": "ai_order_api", "to": "web_shop", "kind": "serving" },
+    { "id": "r_payapi_order", "from": "ai_pay_api", "to": "order_svc", "kind": "serving" },
+    { "id": "r_order_do", "from": "order_svc", "to": "do_order", "kind": "access", "label": "read/write" },
+    { "id": "r_billing_do", "from": "billing_svc", "to": "do_invoice", "kind": "access", "label": "write" },
+    { "id": "r_order_event", "from": "order_svc", "to": "ev_order_placed", "kind": "triggering" },
+    { "id": "r_event_billing", "from": "ev_order_placed", "to": "billing_svc", "kind": "triggering" },
+    { "id": "r_order_crm", "from": "order_svc", "to": "crm", "kind": "flow", "label": "customer updates" },
+    { "id": "r_do_bo", "from": "do_order", "to": "bo_order", "kind": "realization" },
+
+    { "id": "r_ts_db_order", "from": "ts_db", "to": "order_svc", "kind": "serving" },
+    { "id": "r_ts_stream_billing", "from": "ts_stream", "to": "billing_svc", "kind": "serving" },
+    { "id": "r_pg_ts", "from": "pg", "to": "ts_db", "kind": "realization" },
+    { "id": "r_kafka_ts", "from": "kafka", "to": "ts_stream", "kind": "realization" },
+    { "id": "r_k8s_pg", "from": "k8s", "to": "pg", "kind": "composition" },
+    { "id": "r_k8s_kafka", "from": "k8s", "to": "kafka", "kind": "composition" },
+    { "id": "r_art_order", "from": "art_order", "to": "order_svc", "kind": "realization" },
+    { "id": "r_art_pay", "from": "art_pay", "to": "payment_svc", "kind": "realization" },
+    { "id": "r_k8s_art_order", "from": "k8s", "to": "art_order", "kind": "assignment" },
+    { "id": "r_k8s_art_pay", "from": "k8s", "to": "art_pay", "kind": "assignment" },
+    { "id": "r_edge_k8s", "from": "edge", "to": "k8s", "kind": "flow", "label": "HTTPS" },
+
+    { "id": "r_base_target", "from": "plat_base", "to": "plat_target", "kind": "triggering" },
+    { "id": "r_gap_base", "from": "gap_billing", "to": "plat_base", "kind": "association" },
+    { "id": "r_wp_pay_del", "from": "wp_payments", "to": "del_api", "kind": "realization" },
+    { "id": "r_wp_pay_billing", "from": "wp_payments", "to": "wp_billing", "kind": "triggering" },
+    { "id": "r_del_target", "from": "del_api", "to": "plat_target", "kind": "realization" },
+    { "id": "r_wp_billing_gap", "from": "wp_billing", "to": "gap_billing", "kind": "association", "label": "closes" },
+    { "id": "r_wp_billing_target", "from": "wp_billing", "to": "plat_target", "kind": "realization" },
+    { "id": "r_del_paysvc", "from": "del_api", "to": "payment_svc", "kind": "realization" },
+
+    { "id": "r_order_lines", "from": "Order", "to": "OrderLine", "kind": "composition", "fromMult": "1", "toMult": "1..*", "role": "lines" },
+    { "id": "r_order_payments", "from": "Order", "to": "Payment", "kind": "aggregation", "fromMult": "1", "toMult": "0..*", "role": "payments" },
+    { "id": "r_order_status", "from": "Order", "to": "OrderStatus", "kind": "dependency" },
+    { "id": "r_payment_method", "from": "Payment", "to": "PaymentMethod", "kind": "dependency" },
+    { "id": "r_card_gateway", "from": "CardGateway", "to": "PaymentGateway", "kind": "realization" },
+    { "id": "r_wallet_gateway", "from": "WalletGateway", "to": "PaymentGateway", "kind": "realization" },
+    { "id": "r_service_gateway", "from": "OrderService", "to": "PaymentGateway", "kind": "dependency", "label": "pays through" },
+    { "id": "r_service_order", "from": "OrderService", "to": "Order", "kind": "association", "label": "manages" },
+
+    { "id": "r_uc_c_place", "from": "uc_actor_customer", "to": "uc_place", "kind": "association" },
+    { "id": "r_uc_c_track", "from": "uc_actor_customer", "to": "uc_track", "kind": "association" },
+    { "id": "r_uc_c_cancel", "from": "uc_actor_customer", "to": "uc_cancel", "kind": "association" },
+    { "id": "r_uc_place_pay", "from": "uc_place", "to": "uc_pay", "kind": "include" },
+    { "id": "r_uc_refund_cancel", "from": "uc_refund", "to": "uc_cancel", "kind": "extend" },
+    { "id": "r_uc_psp_pay", "from": "uc_actor_psp", "to": "uc_pay", "kind": "association" },
+    { "id": "r_uc_psp_refund", "from": "uc_actor_psp", "to": "uc_refund", "kind": "association" },
+    { "id": "r_uc_clerk_cancel", "from": "uc_actor_clerk", "to": "uc_cancel", "kind": "association" },
+
+    { "id": "t_init", "from": "s_init", "to": "s_draft", "kind": "transition" },
+    { "id": "t_place", "from": "s_draft", "to": "s_placed", "kind": "transition", "label": "place" },
+    { "id": "t_pay", "from": "s_placed", "to": "s_paid", "kind": "transition", "label": "pay" },
+    { "id": "t_ship", "from": "s_paid", "to": "s_shipped", "kind": "transition", "label": "ship" },
+    { "id": "t_done", "from": "s_shipped", "to": "s_final", "kind": "transition" },
+    { "id": "t_cancel_placed", "from": "s_placed", "to": "s_cancelled", "kind": "transition", "label": "cancel" },
+    { "id": "t_cancel_paid", "from": "s_paid", "to": "s_cancelled", "kind": "transition", "label": "refund" },
+    { "id": "t_cancel_done", "from": "s_cancelled", "to": "s_final", "kind": "transition" },
+
+    { "id": "f_a1", "from": "a_init", "to": "a_validate", "kind": "control-flow" },
+    { "id": "f_a2", "from": "a_validate", "to": "a_risk", "kind": "control-flow" },
+    { "id": "f_a3", "from": "a_risk", "to": "a_3ds", "kind": "control-flow", "guard": "amount > 250" },
+    { "id": "f_a4", "from": "a_risk", "to": "a_merge", "kind": "control-flow", "guard": "else" },
+    { "id": "f_a5", "from": "a_3ds", "to": "a_merge", "kind": "control-flow" },
+    { "id": "f_a6", "from": "a_merge", "to": "a_fork", "kind": "control-flow" },
+    { "id": "f_a7", "from": "a_fork", "to": "a_capture", "kind": "control-flow" },
+    { "id": "f_a8", "from": "a_fork", "to": "a_receipt", "kind": "control-flow" },
+    { "id": "f_a9", "from": "a_capture", "to": "a_join", "kind": "control-flow" },
+    { "id": "f_a10", "from": "a_receipt", "to": "a_join", "kind": "control-flow" },
+    { "id": "f_a11", "from": "a_join", "to": "a_final", "kind": "control-flow" },
+
+    { "id": "f_p1", "from": "p_start", "to": "p_check", "kind": "sequence-flow" },
+    { "id": "f_p2", "from": "p_check", "to": "p_gw_stock", "kind": "sequence-flow" },
+    { "id": "f_p3", "from": "p_gw_stock", "to": "p_pay", "kind": "sequence-flow", "label": "yes", "guard": "inStock" },
+    { "id": "f_p4", "from": "p_gw_stock", "to": "p_backorder", "kind": "sequence-flow", "label": "no", "guard": "else" },
+    { "id": "f_p5", "from": "p_backorder", "to": "p_end_cancel", "kind": "sequence-flow" },
+    { "id": "f_p6", "from": "p_pay", "to": "p_split", "kind": "sequence-flow" },
+    { "id": "f_p7", "from": "p_split", "to": "p_pick", "kind": "sequence-flow" },
+    { "id": "f_p8", "from": "p_split", "to": "p_invoice", "kind": "sequence-flow" },
+    { "id": "f_p9", "from": "p_pick", "to": "p_sync", "kind": "sequence-flow" },
+    { "id": "f_p10", "from": "p_invoice", "to": "p_sync", "kind": "sequence-flow" },
+    { "id": "f_p11", "from": "p_sync", "to": "p_ship", "kind": "sequence-flow" },
+    { "id": "f_p12", "from": "p_ship", "to": "p_end", "kind": "sequence-flow" },
+
+    { "id": "r_c_gw_orders", "from": "c_gateway", "to": "c_orders", "kind": "dependency", "label": "REST" },
+    { "id": "r_c_orders_pay", "from": "c_orders", "to": "c_payments", "kind": "dependency", "label": "gRPC" },
+    { "id": "r_c_pay_ledger", "from": "c_payments", "to": "c_ledger", "kind": "dependency" },
+    { "id": "r_c_orders_notify", "from": "c_orders", "to": "c_notify", "kind": "flow", "label": "order.placed" },
+    { "id": "r_c_pay_notify", "from": "c_payments", "to": "c_notify", "kind": "flow", "label": "payment.captured" },
+
+    { "id": "r_d_browser_cluster", "from": "d_browser", "to": "d_cluster", "kind": "association", "label": "HTTPS" },
+    { "id": "r_d_web", "from": "d_art_web", "to": "d_cluster", "kind": "deployment" },
+    { "id": "r_d_orders", "from": "d_art_orders", "to": "d_cluster", "kind": "deployment" },
+    { "id": "r_d_pay", "from": "d_art_pay", "to": "d_cluster", "kind": "deployment" },
+    { "id": "r_d_cluster_db", "from": "d_cluster", "to": "d_db", "kind": "association", "label": "TLS 5432" }
+  ],
+  "views": [
+    {
+      "id": "cross_layer", "type": "archimate", "title": "Cross-layer relationships", "viewpoint": "Layered viewpoint",
+      "nodes": [
+        { "ref": "customer", "row": 0, "col": 0 }, { "ref": "bs_ordering", "row": 0, "col": 1 }, { "ref": "bp_o2c", "row": 0, "col": 2 }, { "ref": "sales_clerk", "row": 0, "col": 3 },
+        { "ref": "as_order", "row": 1, "col": 2 }, { "ref": "as_payment", "row": 1, "col": 3 },
+        { "ref": "web_shop", "row": 2, "col": 0 }, { "ref": "ai_order_api", "row": 2, "col": 1 }, { "ref": "order_svc", "row": 2, "col": 2 }, { "ref": "payment_svc", "row": 2, "col": 3 },
+        { "ref": "ts_db", "row": 3, "col": 2 }, { "ref": "art_pay", "row": 3, "col": 3 },
+        { "ref": "pg", "row": 4, "col": 2 }, { "ref": "k8s", "row": 4, "col": 3 }
+      ],
+      "groups": [
+        { "kind": "lane", "label": "Business", "tone": "cloud", "wraps": ["customer", "bs_ordering", "bp_o2c", "sales_clerk"] },
+        { "kind": "lane", "label": "Application", "tone": "frontend", "wraps": ["as_order", "as_payment", "web_shop", "ai_order_api", "order_svc", "payment_svc"] },
+        { "kind": "lane", "label": "Technology", "tone": "backend", "wraps": ["ts_db", "art_pay", "pg", "k8s"] }
+      ],
+      "exclude": ["r_payapi_order", "r_k8s_art_order"]
+    },
+    {
+      "id": "app_cooperation", "type": "archimate", "title": "Application cooperation", "viewpoint": "Application cooperation viewpoint",
+      "nodes": [
+        { "ref": "web_shop", "row": 1, "col": 0 }, { "ref": "ai_order_api", "row": 1, "col": 1 }, { "ref": "order_svc", "row": 1, "col": 2 },
+        { "ref": "ai_pay_api", "row": 0, "col": 2 }, { "ref": "payment_svc", "row": 0, "col": 3 },
+        { "ref": "ev_order_placed", "row": 1, "col": 3 }, { "ref": "billing_svc", "row": 1, "col": 4 },
+        { "ref": "do_order", "row": 2, "col": 2 }, { "ref": "crm", "row": 2, "col": 3 }, { "ref": "do_invoice", "row": 2, "col": 4 }
+      ],
+      "groups": [ { "kind": "boundary", "label": "Order-to-cash domain", "tone": "frontend", "wraps": ["ai_order_api", "order_svc", "ai_pay_api", "payment_svc", "ev_order_placed", "billing_svc", "do_order", "do_invoice"] } ],
+      "exclude": ["r_as_pay_order"]
+    },
+    {
+      "id": "motivation", "type": "archimate", "title": "Why we are doing this", "viewpoint": "Motivation viewpoint",
+      "nodes": [
+        { "ref": "cfo", "row": 0, "col": 0 }, { "ref": "drv_cash", "row": 0, "col": 1 }, { "ref": "goal_dso", "row": 0, "col": 2 },
+        { "ref": "out_auto", "row": 1, "col": 2 }, { "ref": "cap_fulfil", "row": 1, "col": 3 },
+        { "ref": "prin_api", "row": 2, "col": 0 }, { "ref": "req_pay", "row": 2, "col": 1 }, { "ref": "req_audit", "row": 2, "col": 2 },
+        { "ref": "payment_svc", "row": 3, "col": 1 }, { "ref": "order_svc", "row": 3, "col": 2 }
+      ]
+    },
+    {
+      "id": "business_process", "type": "archimate", "title": "Business process cooperation", "viewpoint": "Business process cooperation viewpoint",
+      "nodes": [
+        { "ref": "sales_clerk", "row": 0, "col": 0 }, { "ref": "bp_o2c", "row": 0, "col": 1.5 },
+        { "ref": "bp_take", "row": 1, "col": 1 }, { "ref": "bp_bill", "row": 1, "col": 2 },
+        { "ref": "bo_order", "row": 2, "col": 1 }, { "ref": "bo_invoice", "row": 2, "col": 2 },
+        { "ref": "as_order", "row": 1, "col": 0 }, { "ref": "as_invoice", "row": 1, "col": 3 }
+      ],
+      "exclude": ["r_as_order_o2c"]
+    },
+    {
+      "id": "fulfilment_bpmn", "type": "bpmn", "title": "Order fulfilment process",
+      "vars": { "inStock": true },
+      "nodes": [
+        { "ref": "p_start", "row": 0, "col": 0 }, { "ref": "p_check", "row": 0, "col": 1 }, { "ref": "p_gw_stock", "row": 0, "col": 2 },
+        { "ref": "p_pay", "row": 0, "col": 3 }, { "ref": "p_split", "row": 0, "col": 4 }, { "ref": "p_invoice", "row": 0, "col": 5 },
+        { "ref": "p_backorder", "row": 1, "col": 2 }, { "ref": "p_end_cancel", "row": 1, "col": 3 },
+        { "ref": "p_pick", "row": 2, "col": 5 }, { "ref": "p_sync", "row": 2, "col": 6 }, { "ref": "p_ship", "row": 2, "col": 7 }, { "ref": "p_end", "row": 2, "col": 8 }
+      ],
+      "groups": [
+        { "kind": "lane", "label": "Sales", "tone": "cloud", "wraps": ["p_start", "p_check", "p_gw_stock", "p_pay", "p_split", "p_invoice", "p_backorder", "p_end_cancel"] },
+        { "kind": "lane", "label": "Warehouse", "tone": "backend", "wraps": ["p_pick", "p_sync", "p_ship", "p_end"] }
+      ]
+    },
+    {
+      "id": "payment_activity", "type": "activity", "title": "Authorise and capture payment",
+      "vars": { "amount": 320 },
+      "nodes": [
+        { "ref": "a_init", "row": 0, "col": 0 }, { "ref": "a_validate", "row": 0, "col": 1 }, { "ref": "a_risk", "row": 0, "col": 2 },
+        { "ref": "a_3ds", "row": 1, "col": 3 }, { "ref": "a_merge", "row": 0, "col": 4 }, { "ref": "a_fork", "row": 0, "col": 5 },
+        { "ref": "a_capture", "row": 0, "col": 6 }, { "ref": "a_receipt", "row": 1, "col": 6 }, { "ref": "a_join", "row": 0, "col": 7 }, { "ref": "a_final", "row": 0, "col": 8 }
+      ]
+    },
+    {
+      "id": "order_states", "type": "state", "title": "Order lifecycle",
+      "nodes": [
+        { "ref": "s_init", "row": 0, "col": 0 }, { "ref": "s_draft", "row": 0, "col": 1 }, { "ref": "s_placed", "row": 0, "col": 2 },
+        { "ref": "s_paid", "row": 0, "col": 3 }, { "ref": "s_shipped", "row": 0, "col": 4 }, { "ref": "s_final", "row": 0, "col": 5 },
+        { "ref": "s_cancelled", "row": 1, "col": 3 }
+      ]
+    },
+    {
+      "id": "checkout_sequence", "type": "sequence", "title": "Checkout and payment",
+      "participants": ["customer", "web_shop", "order_svc", "payment_svc", "billing_svc"],
+      "messages": [
+        { "from": "customer", "to": "web_shop", "label": "submit cart" },
+        { "from": "web_shop", "to": "order_svc", "label": "POST /orders" },
+        { "from": "order_svc", "to": "order_svc", "label": "validate lines", "kind": "self" },
+        { "from": "order_svc", "to": "payment_svc", "label": "authorise(payment)" },
+        { "from": "payment_svc", "to": "order_svc", "label": "authorised", "kind": "reply" },
+        { "from": "order_svc", "to": "billing_svc", "label": "order.placed", "kind": "async" },
+        { "from": "order_svc", "to": "web_shop", "label": "201 Created", "kind": "reply" },
+        { "from": "web_shop", "to": "customer", "label": "confirmation", "kind": "reply" }
+      ],
+      "fragments": [ { "kind": "alt", "label": "payment authorised", "from": 3, "to": 5 } ]
+    },
+    {
+      "id": "use_cases", "type": "usecase", "title": "Ordering use cases",
+      "nodes": [
+        { "ref": "uc_actor_customer", "row": 1, "col": 0 }, { "ref": "uc_actor_clerk", "row": 2, "col": 0 },
+        { "ref": "uc_place", "row": 0, "col": 1 }, { "ref": "uc_track", "row": 1, "col": 1 }, { "ref": "uc_cancel", "row": 2, "col": 1 },
+        { "ref": "uc_pay", "row": 0, "col": 2 }, { "ref": "uc_refund", "row": 2, "col": 2 },
+        { "ref": "uc_actor_psp", "row": 1, "col": 3 }
+      ],
+      "groups": [ { "kind": "system", "label": "Web Shop", "wraps": ["uc_place", "uc_track", "uc_cancel", "uc_pay", "uc_refund"] } ]
+    },
+    {
+      "id": "domain_classes", "type": "class", "title": "Order domain model",
+      "nodes": [
+        { "ref": "OrderService", "row": 0, "col": 0 }, { "ref": "PaymentGateway", "row": 0, "col": 1.5 },
+        { "ref": "Order", "row": 1, "col": 0 }, { "ref": "CardGateway", "row": 1, "col": 1 }, { "ref": "WalletGateway", "row": 1, "col": 2 },
+        { "ref": "OrderLine", "row": 2, "col": 0 }, { "ref": "Payment", "row": 2, "col": 1 }, { "ref": "PaymentMethod", "row": 2, "col": 2 },
+        { "ref": "OrderStatus", "row": 1, "col": 3 }
+      ]
+    },
+    {
+      "id": "components", "type": "component", "title": "Runtime components",
+      "nodes": [
+        { "ref": "c_gateway", "row": 0, "col": 0 }, { "ref": "c_orders", "row": 0, "col": 1 }, { "ref": "c_payments", "row": 0, "col": 2 },
+        { "ref": "c_notify", "row": 1, "col": 1 }, { "ref": "c_ledger", "row": 1, "col": 2 }
+      ],
+      "groups": [ { "kind": "package", "label": "order-to-cash", "wraps": ["c_orders", "c_payments", "c_notify", "c_ledger"] } ]
+    },
+    {
+      "id": "deployment", "type": "deployment", "title": "Production deployment",
+      "nodes": [
+        { "ref": "d_browser", "row": 1, "col": 0 }, { "ref": "d_cluster", "row": 1, "col": 1 }, { "ref": "d_db", "row": 1, "col": 2 },
+        { "ref": "d_art_web", "row": 0, "col": 0 }, { "ref": "d_art_orders", "row": 0, "col": 1 }, { "ref": "d_art_pay", "row": 0, "col": 2 }
+      ]
+    },
+    {
+      "id": "technology", "type": "archimate", "title": "Technology usage", "viewpoint": "Technology usage viewpoint",
+      "nodes": [
+        { "ref": "order_svc", "row": 0, "col": 1 }, { "ref": "billing_svc", "row": 0, "col": 2 },
+        { "ref": "art_order", "row": 1, "col": 0 }, { "ref": "ts_db", "row": 1, "col": 1 }, { "ref": "ts_stream", "row": 1, "col": 2 },
+        { "ref": "pg", "row": 2, "col": 1 }, { "ref": "kafka", "row": 2, "col": 2 },
+        { "ref": "edge", "row": 3, "col": 0 }, { "ref": "k8s", "row": 3, "col": 1.5 }
+      ],
+      "groups": [ { "kind": "boundary", "label": "Platform", "tone": "backend", "wraps": ["ts_db", "ts_stream", "pg", "kafka", "k8s"] } ]
+    },
+    {
+      "id": "migration", "type": "archimate", "title": "Migration roadmap", "viewpoint": "Implementation and migration viewpoint",
+      "nodes": [
+        { "ref": "plat_base", "row": 0, "col": 0 }, { "ref": "plat_target", "row": 0, "col": 2 },
+        { "ref": "gap_billing", "row": 1, "col": 0 }, { "ref": "wp_billing", "row": 1, "col": 1 },
+        { "ref": "wp_payments", "row": 2, "col": 0 }, { "ref": "del_api", "row": 2, "col": 1 }, { "ref": "payment_svc", "row": 2, "col": 2 }
+      ]
+    }
+  ]
+}

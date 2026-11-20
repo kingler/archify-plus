@@ -4,6 +4,24 @@ All notable changes are documented here. Format loosely follows [Keep a Changelo
 
 ## [Unreleased]
 
+## [3.3.0] — 2026-11-19
+
+First release from the `kingler/archify-plus` fork, continuing from upstream Archify 3.2.0.
+
+### Added
+
+- **Enterprise models.** A new `enterprise/` layer in the Skill keeps elements and relationships in one typed-JSON model and draws them as ArchiMate viewpoints, BPMN, and UML activity, state, sequence, use-case, class, component and deployment views. One notation catalog gives every element kind and relationship kind a single look across all of them, using the existing seven tones and the dark, light and blueprint themes.
+  - **Code:** generate TypeScript, Java, Python, PostgreSQL DDL, OpenAPI, state-machine tables, BPMN 2.0 with diagram interchange, and the ArchiMate exchange format.
+  - **Tasks:** generate a delivery plan grouped by TOGAF ADM phase and ordered by the modelled relationships, as Markdown, CSV, JSON, or a GOAL agent program.
+  - **Token runs:** step activity, BPMN and state views with guards, forks and joins.
+  - **Native output:** class, sequence, state and architecture-shaped views compile to native typed JSON for the existing renderers and Viewer.
+  - **Studio:** `enterprise/studio.html` is a self-contained interactive editor over the same model. `enterprise/bin/enterprise.mjs` is the CLI.
+  - **Known limits:** views need authored rows and columns; BPMN, activity and use-case views have no native diagram type and skip the delivery gates; the ArchiMate exchange file and the GOAL program have not been verified in their target tools.
+
+### Changed
+
+- **Release identity now names this fork.** `skill-release.json` and the update contract point at `kingler/archify-plus` and its update manifest, so a 3.3.0 install checks this fork for updates instead of upstream. A stable manifest that names upstream is still accepted for 3.2.0 and earlier.
+
 ## [3.2.0] — 2026-10-18
 
 ### Added

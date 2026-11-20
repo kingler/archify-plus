@@ -256,7 +256,7 @@ async function runControlledWindowsPathE2E() {
     requireSuccess('repository revision discovery', revision);
     const evidenceDiagram = JSON.parse(fs.readFileSync(architectureInput, 'utf8'));
     evidenceDiagram.meta.repository = {
-      url: 'https://github.com/tt-a1i/archify',
+      url: 'https://github.com/kingler/archify-plus',
       revision: revision.stdout.trim(),
     };
     evidenceDiagram.components[0].sources = [{
