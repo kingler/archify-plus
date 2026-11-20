@@ -9,7 +9,7 @@ import { validateModel } from '../lib/model.mjs';
 import { renderView } from '../lib/render.mjs';
 import { CODE_TARGETS, generateCode } from '../lib/codegen.mjs';
 import { generateTasks, taskFiles } from '../lib/tasks.mjs';
-import { compileNative } from '../lib/native.mjs';
+import { compileNative, compileView } from '../lib/native.mjs';
 import { createRun, runToCompletion } from '../lib/simulate.mjs';
 import { THEMES } from '../lib/notation.mjs';
 
@@ -81,7 +81,12 @@ function codeFiles(model, flags) {
   return targets.flatMap((name) => generateCode(model, name).map((file) => ({ ...file, path: `code/${file.path}` })));
 }
 
-const nativeFiles = (model) => compileNative(model).map((entry) => ({ path: entry.path, content: `${JSON.stringify(entry.diagram, null, 2)}\n` }));
+function nativeFiles(model) {
+  // Say what the native compile changed or could not carry over.
+  for (const view of model.views || []) for (const note of compileView(model, view.id)?.notes || []) console.error(`note: [${view.id}] ${note}`);
+  return compileNativeFiles(model);
+}
+const compileNativeFiles = (model) => compileNative(model).map((entry) => ({ path: entry.path, content: `${JSON.stringify(entry.diagram, null, 2)}\n` }));
 
 export function main(argv) {
   const { positional, flags } = parseArgs(argv);

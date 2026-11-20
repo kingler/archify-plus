@@ -513,7 +513,6 @@ function validateModel(model) {
     for (const end of ['from', 'to']) {
       if (!elementIds.has(rel[end])) error('dangling-reference', { relationship: rel.id, end, target: rel[end] }, `Relationship "${rel.id}" ${end} "${rel[end]}" is not an element.`, ['Point the relationship at an existing element id, or add the element.']);
     }
-    if (rel.from === rel.to && !['transition', 'flow'].includes(rel.kind)) warning('self-relationship', { relationship: rel.id }, `Relationship "${rel.id}" connects "${rel.from}" to itself and is not drawn.`, ['Remove it or connect two elements.']);
   }
 
   // Generalisation must stay acyclic for code generation.
@@ -598,12 +597,24 @@ function validateModel(model) {
 }
 
 // Small naming helpers shared by the generators.
-const words = (text) => String(text).replace(/([a-z0-9])([A-Z])/g, '$1 $2').split(/[^A-Za-z0-9]+/).filter(Boolean);
+// Letters and digits of any script count, so a label such as "注文" stays a usable identifier.
+const words = (text) => String(text).replace(/([a-z0-9])([A-Z])/g, '$1 $2').split(/[^\p{L}\p{N}]+/u).filter(Boolean);
 const pascal = (text) => words(text).map((word) => word[0].toUpperCase() + word.slice(1)).join('') || 'Unnamed';
 const camel = (text) => { const name = pascal(text); return name[0].toLowerCase() + name.slice(1); };
 const snake = (text) => words(text).map((word) => word.toLowerCase()).join('_') || 'unnamed';
 const kebab = (text) => words(text).map((word) => word.toLowerCase()).join('-') || 'unnamed';
 const screaming = (text) => snake(text).toUpperCase();
+
+// A generated name that is a legal identifier and not yet in `taken`. Falls
+// back to the element or view id, which validation guarantees is unique ASCII.
+function uniqueName(style, label, id, taken) {
+  let name = words(label).length ? style(label) : style(id);
+  if (/^\p{N}/u.test(name)) name = style(`n ${name}`);
+  if (taken.has(name.toLowerCase())) name = style(id);
+  for (let index = 2; taken.has(name.toLowerCase()); index += 1) name = style(`${id} ${index}`);
+  taken.add(name.toLowerCase());
+  return name;
+}
 
 // ---- lib/layout.mjs ----
 // Deterministic layout for enterprise views. Authors place nodes on a row/col
@@ -827,14 +838,23 @@ function routeEdges(view, nodes, rels, gapX, gapY) {
   const byId = new Map(nodes.map((node) => [node.id, node]));
   const authored = view.routes || {};
   const edges = [];
+  const loops = [];
   const usedPairs = new Map();
   for (const rel of rels) {
     const a = byId.get(rel.from); const b = byId.get(rel.to);
-    if (!a || !b || a === b) continue;
+    if (!a || !b) continue;
+    if (a === b) {
+      // A self-relationship leaves the right side and re-enters the top.
+      const nth = loops.filter((loop) => loop.from === a.id).length;
+      const reach = 22 + nth * 10; const inset = Math.min(a.w / 2 - 4, 14 + nth * 10);
+      const y = a.cy - Math.min(a.h / 2 - 4, 8 + nth * 8); const x = a.x + a.w - inset;
+      loops.push({ id: rel.id, rel, from: a.id, to: a.id, points: [[a.x + a.w, y], [a.x + a.w + reach, y], [a.x + a.w + reach, a.y - reach + 4], [x, a.y - reach + 4], [x, a.y]] });
+      continue;
+    }
     const skip = new Set([a.id, b.id]);
-    const want = authored[rel.id] || {};
-    let best = null;
-    for (const option of candidates(a, b, gapX, gapY)) {
+    const choose = (want) => {
+     let best = null;
+     for (const option of candidates(a, b, gapX, gapY)) {
       if ((want.fromSide && want.fromSide !== option.fromSide) || (want.toSide && want.toSide !== option.toSide)) continue;
       const points = buildPoints(option, a, b);
       const length = points.slice(1).reduce((sum, point, index) => sum + Math.abs(point[0] - points[index][0]) + Math.abs(point[1] - points[index][1]), 0);
@@ -851,8 +871,11 @@ function routeEdges(view, nodes, rels, gapX, gapY) {
       if (usedPairs.get(pairKey) === `${option.shape}:${[option.fromSide, option.toSide].sort().join()}` && option.bends) bias += 4;
       const score = hits(points, nodes, skip) * 1000 + option.bends * 10 + (option.detour ? 14 : 0) + bias + length / 100;
       if (!best || score < best.score) best = { ...option, score };
-    }
-    if (!best) continue;
+     }
+     return best;
+    };
+    // Authored sides that no route can honour must not make the relationship vanish.
+    const best = choose(authored[rel.id] || {}) || choose({});
     usedPairs.set([a.id, b.id].sort().join('|'), `${best.shape}:${[best.fromSide, best.toSide].sort().join()}`);
     edges.push({ id: rel.id, rel, a, b, route: best });
   }
@@ -907,7 +930,7 @@ function routeEdges(view, nodes, rels, gapX, gapY) {
     }
     for (const edge of distinct) if (edge.lane !== undefined) edge.route.channel += (edge.lane - (lanes.length - 1) / 2) * 9;
   }
-  return edges.map((edge) => ({ id: edge.id, rel: edge.rel, from: edge.a.id, to: edge.b.id, points: buildPoints(edge.route, edge.a, edge.b) }));
+  return [...edges.map((edge) => ({ id: edge.id, rel: edge.rel, from: edge.a.id, to: edge.b.id, points: buildPoints(edge.route, edge.a, edge.b) })), ...loops];
 }
 
 function edgeLabelText(rel) {
@@ -1397,7 +1420,8 @@ function many(multiplicity) {
 // implied by composition, aggregation, and association ends.
 function classifierModel(model) {
   const elements = (model.elements || []).filter((element) => isClassifier(element.kind));
-  const types = elements.map((element) => ({ id: element.id, name: pascal(element.label), kind: element.kind, element, doc: element.doc || '', extends: [], implements: [], fields: [], methods: element.methods || [], references: [] }));
+  const taken = new Set();
+  const types = elements.map((element) => ({ id: element.id, name: uniqueName(pascal, element.label, element.id, taken), kind: element.kind, element, doc: element.doc || '', extends: [], implements: [], fields: [], methods: element.methods || [], references: [] }));
   const byId = new Map(types.map((type) => [type.id, type]));
   for (const type of types) {
     for (const attribute of type.element.attributes || []) type.fields.push({ ...attribute, type: attribute.type || 'any', source: 'attribute' });
@@ -1409,8 +1433,14 @@ function classifierModel(model) {
     else if (rel.kind === 'realization') from.implements.push(to);
     else if (['composition', 'aggregation', 'association'].includes(rel.kind)) {
       const isMany = many(rel.toMult);
-      const name = rel.role || (isMany ? `${camel(to.name)}s` : camel(to.name));
-      if (!from.fields.some((field) => field.name === name || parseType(field.type).base === to.name)) {
+      // An attribute that already names or holds the target is the authored
+      // field. Otherwise every relationship gets its own field, so two
+      // associations to one type (billing and shipping address) both survive.
+      const base = rel.role || (isMany ? `${camel(to.name)}s` : camel(to.name));
+      const declared = from.fields.some((field) => field.source === 'attribute' && (field.name === base || (!rel.role && parseType(field.type).base === to.name)));
+      if (!declared) {
+        let name = base;
+        for (let index = 2; from.fields.some((field) => field.name === name); index += 1) name = `${base}${index}`;
         from.fields.push({ name, type: isMany ? `${to.name}[]` : to.name, visibility: 'public', nullable: /^0/.test(String(rel.toMult || '')) && !isMany, source: rel.kind, relationship: rel.id });
       }
       from.references.push({ rel, to });
@@ -1430,27 +1460,49 @@ function referenced(type, types) {
 
 // ---- TypeScript -----------------------------------------------------------
 
+const isClass = (type) => type.kind === 'class' || type.kind === 'abstract';
+
+// Enum literal names, unique within the enum and legal in every target.
+function literals(type) {
+  const taken = new Set();
+  return type.fields.map((item, index) => uniqueName(screaming, item.name, `value ${index + 1}`, taken));
+}
+
+// Constructor parameters of a class: inherited ones first, then its own, with
+// optional parameters last so the signature is legal.
+function constructorFields(type) {
+  const parent = type.extends.find(isClass);
+  const inherited = parent ? constructorFields(parent).map((entry) => ({ ...entry, own: false })) : [];
+  const own = type.fields.filter((item) => !item.static && !inherited.some((entry) => entry.item.name === item.name)).map((item) => ({ item, own: true }));
+  const all = [...inherited, ...own];
+  return [...all.filter((entry) => !entry.item.nullable), ...all.filter((entry) => entry.item.nullable)];
+}
+
 function typescript(model) {
   const types = classifierModel(model);
   const files = types.map((type) => {
-    const imports = referenced(type, types).map((name) => `import type { ${name} } from './${kebab(name)}';`);
-    const lines = [header(model, '//'), ...imports, ...(imports.length ? [''] : ['']), ...(type.doc ? [`/** ${type.doc} */`] : [])];
+    // A superclass is used as a value; everything else is a type-only import.
+    const superclass = isClass(type) ? type.extends.find(isClass) : null;
+    const contracts = isClass(type) ? [...type.extends.filter((parent) => parent !== superclass), ...type.implements] : [];
+    const imports = referenced(type, types).map((name) => `import ${superclass?.name === name ? '' : 'type '}{ ${name} } from './${kebab(name)}';`);
+    const lines = [header(model, '//'), ...imports, '', ...(type.doc ? [`/** ${type.doc} */`] : [])];
     const field = (item, modifiers = '') => `  ${modifiers}${item.name}${item.nullable ? '?' : ''}: ${typeName(item.type, 'ts', types)};`;
     const signature = (method) => `${method.name}(${parseParameters(method.parameters).map((parameter) => `${parameter.name}: ${typeName(parameter.type, 'ts', types)}`).join(', ')}): ${typeName(method.returns || 'void', 'ts', types)}`;
     if (type.kind === 'enum') {
-      lines.push(`export enum ${type.name} {`, ...type.fields.map((item) => `  ${screaming(item.name)} = '${screaming(item.name)}',`), '}');
-    } else if (type.kind === 'interface' || type.kind === 'record' || type.kind === 'entity') {
+      lines.push(`export enum ${type.name} {`, ...literals(type).map((name) => `  ${name} = '${name}',`), '}');
+    } else if (!isClass(type)) {
       const parents = [...type.extends, ...type.implements].map((parent) => parent.name);
       lines.push(`export interface ${type.name}${parents.length ? ` extends ${parents.join(', ')}` : ''} {`);
       lines.push(...type.fields.map((item) => field(item, type.kind === 'record' ? 'readonly ' : '')));
       lines.push(...type.methods.map((method) => `  ${signature(method)};`), '}');
     } else {
       const visibility = (item) => ({ private: 'private ', protected: 'protected ' }[item.visibility] || '');
-      lines.push(`export ${type.kind === 'abstract' ? 'abstract ' : ''}class ${type.name}${type.extends.length ? ` extends ${type.extends[0].name}` : ''}${type.implements.length ? ` implements ${type.implements.map((parent) => parent.name).join(', ')}` : ''} {`);
-      const required = type.fields.filter((item) => !item.static);
+      lines.push(`export ${type.kind === 'abstract' ? 'abstract ' : ''}class ${type.name}${superclass ? ` extends ${superclass.name}` : ''}${contracts.length ? ` implements ${contracts.map((parent) => parent.name).join(', ')}` : ''} {`);
       lines.push(...type.fields.filter((item) => item.static).map((item) => `  ${visibility(item)}static ${item.name}: ${typeName(item.type, 'ts', types)};`));
-      if (required.length) {
-        lines.push('  constructor(', ...required.map((item) => `    ${visibility(item) || 'public '}${item.name}${item.nullable ? '?' : ''}: ${typeName(item.type, 'ts', types)},`), `  ) {${type.extends.length ? ' super(); ' : ''}}`);
+      const parameters = constructorFields(type);
+      if (parameters.some((entry) => entry.own)) {
+        const call = superclass ? ` super(${constructorFields(superclass).map((entry) => entry.item.name).join(', ')}); ` : '';
+        lines.push('  constructor(', ...parameters.map(({ item, own }) => `    ${own ? visibility(item) || 'public ' : ''}${item.name}${item.nullable ? '?' : ''}: ${typeName(item.type, 'ts', types)},`), `  ) {${call}}`);
       }
       for (const method of type.methods) {
         if (method.abstract && type.kind === 'abstract') lines.push('', `  ${visibility(method)}abstract ${signature(method)};`);
@@ -1474,7 +1526,7 @@ function java(model) {
     const lines = [header(model, '//'), `package ${pkg};`, '', ...(type.doc ? [`/** ${type.doc} */`] : [])];
     const visibility = (item) => `${{ private: 'private', protected: 'protected', package: '' }[item.visibility] ?? 'public'} `.replace(/^ $/, '');
     const signature = (method) => `${typeName(method.returns || 'void', 'java', types)} ${method.name}(${parseParameters(method.parameters).map((parameter) => `${typeName(parameter.type, 'java', types)} ${parameter.name}`).join(', ')})`;
-    if (type.kind === 'enum') lines.push(`public enum ${type.name} {`, `    ${type.fields.map((item) => screaming(item.name)).join(',\n    ')}`, '}');
+    if (type.kind === 'enum') lines.push(`public enum ${type.name} {`, `    ${literals(type).join(',\n    ')}`, '}');
     else if (type.kind === 'interface') {
       lines.push(`public interface ${type.name}${[...type.extends, ...type.implements].length ? ` extends ${[...type.extends, ...type.implements].map((parent) => parent.name).join(', ')}` : ''} {`);
       lines.push(...type.methods.map((method) => `    ${signature(method)};`), '}');
@@ -1511,7 +1563,7 @@ function python(model) {
     lines.push('');
     const signature = (method) => `def ${snake(method.name)}(self${parseParameters(method.parameters).map((parameter) => `, ${snake(parameter.name)}: ${typeName(parameter.type, 'py', types)}`).join('')}) -> ${typeName(method.returns || 'void', 'py', types)}:`;
     const doc = type.doc ? [`    """${type.doc}"""`] : [];
-    if (type.kind === 'enum') lines.push(`class ${type.name}(Enum):`, ...doc, ...type.fields.map((item) => `    ${screaming(item.name)} = "${screaming(item.name)}"`));
+    if (type.kind === 'enum') lines.push(`class ${type.name}(Enum):`, ...doc, ...literals(type).map((name) => `    ${name} = "${name}"`));
     else if (type.kind === 'interface') {
       lines.push(`class ${type.name}(Protocol):`, ...doc);
       if (!type.methods.length && !doc.length) lines.push('    ...');
@@ -1519,7 +1571,10 @@ function python(model) {
       if (type.methods.length) lines.pop();
     } else {
       const bases = [...type.extends.map((parent) => parent.name), ...(type.kind === 'abstract' ? ['ABC'] : [])];
-      lines.push(`@dataclass${type.kind === 'record' ? '(frozen=True)' : ''}`, `class ${type.name}${bases.length ? `(${bases.join(', ')})` : ''}:`, ...doc);
+      // A subclass may add required fields after an inherited default, which
+      // positional dataclass fields forbid; keyword-only fields allow it.
+      const options = [...(type.kind === 'record' ? ['frozen=True'] : []), ...(type.extends.length ? ['kw_only=True'] : [])];
+      lines.push(`@dataclass${options.length ? `(${options.join(', ')})` : ''}`, `class ${type.name}${bases.length ? `(${bases.join(', ')})` : ''}:`, ...doc);
       const fields = [...type.fields].sort((p, q) => Number(Boolean(p.nullable || parseType(p.type).many)) - Number(Boolean(q.nullable || parseType(q.type).many)));
       for (const item of fields) {
         const annotation = typeName(item.type, 'py', types);
@@ -1551,11 +1606,17 @@ function sql(model) {
     if (!from || !to || !['composition', 'aggregation', 'association'].includes(rel.kind)) continue;
     // The key lives on the "many" end; a to-one association keeps it on the source.
     const [holder, target] = many(rel.toMult) || rel.kind === 'composition' ? [to, from] : [from, to];
-    foreign.get(holder.id).push({ column: `${snake(target.name)}_id`, target, required: rel.kind === 'composition' || !/^0/.test(String(holder === to ? rel.fromMult : rel.toMult) || ''), cascade: rel.kind === 'composition' });
+    // A to-one key takes the role name; repeated keys to one table stay distinct.
+    const keys = foreign.get(holder.id);
+    const stem = holder === from && rel.role ? snake(rel.role) : snake(target.name);
+    let column = `${stem}_id`;
+    if (keys.some((key) => key.column === column) && rel.role && holder !== from) column = `${stem}_${snake(rel.role)}_id`;
+    for (let index = 2; keys.some((key) => key.column === column); index += 1) column = `${stem}_${index}_id`;
+    keys.push({ column, target, required: rel.kind === 'composition' || !/^0/.test(String(holder === to ? rel.fromMult : rel.toMult) || ''), cascade: rel.kind === 'composition' });
   }
   for (const type of enums) {
     if (entities.some((entity) => entity.fields.some((item) => parseType(item.type).base === type.name))) {
-      lines.push(`CREATE TYPE ${q(snake(type.name))} AS ENUM (${type.fields.map((item) => `'${screaming(item.name)}'`).join(', ')});`, '');
+      lines.push(`CREATE TYPE ${q(snake(type.name))} AS ENUM (${literals(type).map((name) => `'${name}'`).join(', ')});`, '');
     }
   }
   const constraints = [];
@@ -1571,8 +1632,11 @@ function sql(model) {
       columns.push(`  ${q(snake(item.name))} ${sqlType}${item.pk ? ' PRIMARY KEY' : item.nullable ? '' : ' NOT NULL'}${item.unique ? ' UNIQUE' : ''}`);
     }
     for (const key of foreign.get(entity.id)) {
-      if (!fields.some((item) => snake(item.name) === key.column)) columns.push(`  ${q(key.column)} UUID${key.required ? ' NOT NULL' : ''}`);
-      const targetKey = key.target.fields.find((item) => item.pk)?.name || 'id';
+      // The key column has the type of the primary key it references.
+      const targetPk = key.target.fields.find((item) => item.source === 'attribute' && item.pk);
+      const keyType = targetPk ? PRIMITIVES[parseType(targetPk.type).base.toLowerCase()]?.sql || 'TEXT' : 'UUID';
+      if (!fields.some((item) => snake(item.name) === key.column)) columns.push(`  ${q(key.column)} ${keyType}${key.required ? ' NOT NULL' : ''}`);
+      const targetKey = targetPk?.name || 'id';
       constraints.push(`ALTER TABLE ${q(table)} ADD CONSTRAINT ${q(`fk_${table}_${key.column}`)} FOREIGN KEY (${q(key.column)}) REFERENCES ${q(snake(key.target.name))} (${q(snake(targetKey))})${key.cascade ? ' ON DELETE CASCADE' : ''};`);
       constraints.push(`CREATE INDEX ${q(`idx_${table}_${key.column}`)} ON ${q(table)} (${q(key.column)});`);
     }
@@ -1598,6 +1662,7 @@ function yaml(value, indent = 0) {
 function openapi(model) {
   const interfaces = (model.elements || []).filter((element) => Array.isArray(element.operations) && element.operations.length);
   if (!interfaces.length) return [];
+  const filePaths = new Set();
   const types = classifierModel(model);
   const schemaRef = (name) => (types.some((type) => type.name === name) ? { $ref: `#/components/schemas/${name}` } : { type: 'object' });
   const property = (item) => {
@@ -1608,7 +1673,7 @@ function openapi(model) {
   };
   const schemas = {};
   for (const type of types) {
-    if (type.kind === 'enum') schemas[type.name] = { type: 'string', enum: type.fields.map((item) => screaming(item.name)) };
+    if (type.kind === 'enum') schemas[type.name] = { type: 'string', enum: literals(type) };
     else if (['entity', 'record'].includes(type.kind)) {
       const required = type.fields.filter((item) => !item.nullable && !parseType(item.type).many).map((item) => item.name);
       schemas[type.name] = { type: 'object', ...(required.length ? { required } : {}), properties: Object.fromEntries(type.fields.map((item) => [item.name, property(item)])) };
@@ -1628,7 +1693,7 @@ function openapi(model) {
       } };
     }
     const doc = { openapi: '3.1.0', info: { title: element.label, version: '0.1.0', description: element.doc || `Generated from the ${model.meta?.title || 'enterprise'} model.` }, paths, components: { schemas } };
-    return { path: `openapi/${kebab(element.label)}.yaml`, content: `${header(model, '#')}\n${yaml(doc)}\n` };
+    return { path: `openapi/${uniqueName(kebab, element.label, element.id, filePaths)}.yaml`, content: `${header(model, '#')}\n${yaml(doc)}\n` };
   });
 }
 
@@ -1636,30 +1701,46 @@ function openapi(model) {
 
 function statemachine(model) {
   const { elements } = indexModel(model);
+  const machines = new Set(); const paths = new Set();
   return (model.views || []).filter((view) => view.type === 'state').map((view) => {
-    const name = pascal(view.title);
+    const name = uniqueName(pascal, view.title, view.id, machines);
     const rels = viewRelationships(model, view).filter((rel) => rel.kind === 'transition');
     const states = (view.nodes || []).map((node) => elements.get(node.ref)).filter((element) => element && element.kind === 'state');
     const stateIds = new Set(states.map((state) => state.id));
-    const key = (element) => screaming(element.label);
+    const stateNames = new Set();
+    const keys = new Map(states.map((state) => [state.id, uniqueName(screaming, state.label, state.id, stateNames)]));
+    const key = (element) => keys.get(element.id);
     const initial = rels.find((rel) => elements.get(rel.from)?.kind === 'initial' && stateIds.has(rel.to));
     const finals = rels.filter((rel) => elements.get(rel.to)?.kind === 'final' && stateIds.has(rel.from)).map((rel) => key(elements.get(rel.from)));
     const table = new Map(states.map((state) => [key(state), []]));
     for (const rel of rels) {
       if (!stateIds.has(rel.from) || !stateIds.has(rel.to)) continue;
-      table.get(key(elements.get(rel.from))).push({ event: screaming(rel.label || `to ${elements.get(rel.to).label}`), to: key(elements.get(rel.to)) });
+      table.get(key(elements.get(rel.from))).push({ event: screaming(rel.label || `to ${key(elements.get(rel.to))}`), to: key(elements.get(rel.to)), guard: rel.guard });
     }
+    // One state may leave on the same event under different guards. An object
+    // key can hold one target, so those events are named by their target too.
+    for (const entries of table.values()) {
+      const seen = new Set();
+      for (const entry of entries) {
+        const repeated = entries.filter((other) => other.event === entry.event).length > 1;
+        let event = repeated ? `${entry.event}_TO_${entry.to}` : entry.event;
+        for (let index = 2; seen.has(event); index += 1) event = `${entry.event}_TO_${entry.to}_${index}`;
+        seen.add(event);
+        entry.key = event;
+      }
+    }
+    for (const entries of table.values()) for (const entry of entries) entry.event = entry.key;
     const events = [...new Set([...table.values()].flat().map((entry) => entry.event))];
     const union = (items) => (items.length ? items.map((item) => `'${item}'`).join(' | ') : 'never');
     const lines = [header(model, '//'), '', `export type ${name}State = ${union([...table.keys()])};`, `export type ${name}Event = ${union(events)};`, '',
       `export const ${camel(name)}Initial: ${name}State = '${initial ? key(elements.get(initial.to)) : [...table.keys()][0]}';`,
       `export const ${camel(name)}Final: readonly ${name}State[] = [${[...new Set(finals)].map((item) => `'${item}'`).join(', ')}];`, '',
       `export const ${camel(name)}Transitions: Record<${name}State, Partial<Record<${name}Event, ${name}State>>> = {`,
-      ...[...table.entries()].map(([state, entries]) => `  ${state}: {${entries.length ? ` ${entries.map((entry) => `${entry.event}: '${entry.to}'`).join(', ')} ` : ''}},`), '};', '',
+      ...[...table.entries()].map(([state, entries]) => `  ${state}: {${entries.length ? ` ${entries.map((entry) => `${entry.event}: '${entry.to}'`).join(', ')} ` : ''}},${entries.some((entry) => entry.guard) ? ` // guards: ${entries.filter((entry) => entry.guard).map((entry) => `${entry.event} when ${String(entry.guard).replace(/[\r\n]+/g, ' ')}`).join('; ')}` : ''}`), '};', '',
       `export function ${camel(name)}Next(state: ${name}State, event: ${name}Event): ${name}State {`,
       `  const next = ${camel(name)}Transitions[state][event];`,
       '  if (!next) throw new Error(`Illegal transition: ${state} on ${event}`);', '  return next;', '}'];
-    return { path: `statemachine/${kebab(view.title)}.ts`, content: `${lines.join('\n')}\n` };
+    return { path: `statemachine/${uniqueName(kebab, view.title, view.id, paths)}.ts`, content: `${lines.join('\n')}\n` };
   });
 }
 
@@ -1675,6 +1756,7 @@ const BPMN_EVENT_DEFS = { message: 'messageEventDefinition', timer: 'timerEventD
 
 function bpmn(model) {
   const { elements } = indexModel(model);
+  const paths = new Set();
   return (model.views || []).filter((view) => view.type === 'bpmn' || view.type === 'activity').map((view) => {
     const layout = layoutView(model, view);
     const processId = `Process_${view.id}`;
@@ -1713,7 +1795,7 @@ function bpmn(model) {
     for (const node of layout.nodes) bounds(node.id, node, KINDS[node.kind].shape === 'gateway' ? ' isMarkerVisible="true"' : '');
     for (const edge of flows) out.push(`      <bpmndi:BPMNEdge id="${edge.id}_di" bpmnElement="${edge.id}">`, ...edge.points.map(([x, y]) => `        <di:waypoint x="${Math.round(x)}" y="${Math.round(y)}"/>`), '      </bpmndi:BPMNEdge>');
     out.push('    </bpmndi:BPMNPlane>', '  </bpmndi:BPMNDiagram>', '</bpmn:definitions>');
-    return { path: `bpmn/${kebab(view.title)}.bpmn`, content: `${out.join('\n')}\n` };
+    return { path: `bpmn/${uniqueName(kebab, view.title, view.id, paths)}.bpmn`, content: `${out.join('\n')}\n` };
   });
 }
 
@@ -2157,34 +2239,63 @@ const CLASS_KINDS = { entity: 'record' };
 const CLASS_RELATIONS = { specialization: 'inheritance' };
 const pick = (source, keys) => Object.fromEntries(keys.filter((key) => source[key] !== undefined).map((key) => [key, source[key]]));
 
-function classView(model, view, elements) {
+// The enterprise grid allows any fractional row or column. Native grids want
+// integer cells (class columns also allow halves), so rank the distinct
+// coordinates instead of rounding them, which could put two nodes in one cell.
+function gridCells(nodes, { halfCols = false } = {}) {
+  const rank = (values) => { const sorted = [...new Set(values)].sort((a, b) => a - b); return (value) => sorted.indexOf(value); };
+  const row = rank(nodes.map((node) => node.row));
+  const col = rank(nodes.map((node) => node.col));
+  const taken = new Set();
+  return new Map(nodes.map((node) => {
+    const cell = { row: row(node.row), col: halfCols ? Math.round(node.col * 2) / 2 : col(node.col) };
+    while (taken.has(`${cell.row}:${cell.col}`)) cell.col += halfCols ? 0.5 : 1;
+    taken.add(`${cell.row}:${cell.col}`);
+    return [node.ref, cell];
+  }));
+}
+
+function classView(model, view, elements, notes) {
+  const cells = gridCells(view.nodes || [], { halfCols: true });
   const types = (view.nodes || []).map((node) => {
     const element = elements.get(node.ref);
     return {
       id: element.id, label: element.label, kind: CLASS_KINDS[element.kind] || element.kind, ...(element.doc ? { sublabel: element.doc } : {}),
-      row: Math.round(node.row), col: Math.round(node.col * 2) / 2,
+      ...cells.get(node.ref),
       ...(element.attributes?.length ? { attributes: element.attributes.map((item) => pick(item, ['name', 'type', 'visibility', 'static'])) } : {}),
       ...(element.methods?.length ? { methods: element.methods.map((item) => pick(item, ['name', 'parameters', 'returns', 'visibility', 'static', 'abstract'])) } : {}),
     };
   }).filter((type) => ['class', 'abstract', 'interface', 'enum', 'record'].includes(type.kind));
   const ids = new Set(types.map((type) => type.id));
+  for (const rel of viewRelationships(model, view)) if (rel.from === rel.to) notes.push(`Self-relationship "${rel.id}" has no native class notation and was left out.`);
   const relationships = viewRelationships(model, view).filter((rel) => ids.has(rel.from) && ids.has(rel.to) && rel.from !== rel.to)
     .map((rel) => ({ id: rel.id, from: rel.from, to: rel.to, kind: CLASS_RELATIONS[rel.kind] || rel.kind, ...(rel.label ? { label: rel.label } : {}) }))
     .filter((rel) => ['dependency', 'association', 'inheritance', 'realization', 'composition', 'aggregation'].includes(rel.kind));
   return { schema_version: 1, diagram_type: 'class', meta: meta(model, view), layout: { mode: 'grid' }, types, relationships };
 }
 
-function sequenceView(model, view, elements) {
+function sequenceView(model, view, elements, notes) {
   const participants = (view.participants || []).map((ref) => { const element = elements.get(ref); return { id: element.id, type: toneOf(element), label: element.label, sublabel: element.tech || kindSpec(element.kind).label }; });
   const VARIANTS = { sync: 'default', async: 'dashed', reply: 'return', self: 'default' };
   const step = 30;
-  const messages = (view.messages || []).map((message, index) => ({ id: `m${index + 1}`, from: message.from, to: message.to, y: 170 + index * step, label: message.label || '…', variant: VARIANTS[message.kind || 'sync'] }))
-    .filter((message) => message.from !== message.to);
-  const last = 170 + (view.messages || []).length * step;
+  // The native renderer draws messages between two participants only, so an
+  // internal step becomes a note on the nearest real message.
+  const messages = []; const pending = [];
+  for (const message of view.messages || []) {
+    if (message.from === message.to) {
+      const text = `${elements.get(message.from).label}: ${message.label || 'internal step'}`;
+      if (messages.length) messages[messages.length - 1].note = [messages[messages.length - 1].note, text].filter(Boolean).join('; ');
+      else pending.push(text);
+      continue;
+    }
+    messages.push({ id: `m${messages.length + 1}`, from: message.from, to: message.to, y: 170 + messages.length * step, label: message.label || '…', variant: VARIANTS[message.kind || 'sync'], ...(pending.length ? { note: pending.splice(0).join('; ') } : {}) });
+  }
+  if (!messages.length) { notes.push('Every message is a self-message, which the native sequence renderer cannot draw; no native diagram was written.'); return null; }
+  const last = 170 + messages.length * step;
   return { schema_version: 1, diagram_type: 'sequence', meta: meta(model, view, { viewBox: [Math.max(480, participants.length * 190), Math.max(480, last + 90)], column_fit: 'spread' }), participants, messages };
 }
 
-function stateView(model, view, elements) {
+function stateView(model, view, elements, notes) {
   const rels = viewRelationships(model, view).filter((rel) => rel.kind === 'transition');
   const placed = (view.nodes || []).map((node) => elements.get(node.ref));
   const real = placed.filter((element) => element.kind !== 'initial');
@@ -2208,21 +2319,23 @@ function stateView(model, view, elements) {
   walk(start.id, [start.id]);
   const states = real.map((element) => ({ id: element.id, type: typeOf(element), label: element.label || 'Done' }));
   const seen = new Set();
+  for (const rel of rels) if (rel.from === rel.to) notes.push(`Self-transition "${rel.id}" has no native lifecycle notation and was left out.`);
   const transitions = rels.filter((rel) => elements.get(rel.from).kind !== 'initial' && rel.from !== rel.to)
     .filter((rel) => { const key = `${rel.from}>${rel.to}`; if (seen.has(key)) return false; seen.add(key); return true; })
     .map((rel) => ({ id: rel.id, from: rel.from, to: rel.to, ...(rel.label ? { label: rel.label } : {}) }));
   return { schema_version: 3, diagram_type: 'lifecycle', meta: meta(model, view), mainPath: best, states, transitions };
 }
 
-function architectureView(model, view, elements) {
+function architectureView(model, view, elements, notes) {
   const nodes = view.nodes || [];
-  const scale = nodes.some((node) => !Number.isInteger(node.col)) ? 2 : 1;
+  const cells = gridCells(nodes);
   // Native cards are fixed-size, so size every card for the longest label.
   const width = Math.max(150, ...nodes.map((node) => Math.ceil(elements.get(node.ref).label.length * 7.4) + 34));
-  const components = nodes.map((node) => { const element = elements.get(node.ref); return { id: element.id, type: toneOf(element), label: element.label, sublabel: element.tech || kindSpec(element.kind).label, row: Math.round(node.row), col: Math.round(node.col * scale), size: [width, 64] }; });
+  const components = nodes.map((node) => { const element = elements.get(node.ref); return { id: element.id, type: toneOf(element), label: element.label, sublabel: element.tech || kindSpec(element.kind).label, ...cells.get(node.ref), size: [width, 64] }; });
   const cell = new Map(components.map((component) => [component.id, component]));
   // A label on a vertical run is moved off the source card into the row gap.
   const labelShift = (rel) => { const from = cell.get(rel.from); const to = cell.get(rel.to); return from.col === to.col && from.row !== to.row ? { labelDy: Math.sign(to.row - from.row) * LABEL_DROP } : {}; };
+  for (const rel of viewRelationships(model, view)) if (rel.from === rel.to) notes.push(`Self-relationship "${rel.id}" has no native architecture notation and was left out.`);
   const connections = viewRelationships(model, view).filter((rel) => rel.from !== rel.to).map((rel) => ({ id: rel.id, from: rel.from, to: rel.to, ...(rel.label ? { label: rel.label, ...labelShift(rel) } : {}), ...(RELATIONS[rel.kind].dash === 'solid' ? {} : { variant: 'dashed' }) }));
   const boundaries = (view.groups || []).map((group) => ({ kind: 'region', label: group.label, wraps: group.wraps }));
   const layout = { mode: 'grid', cols: Math.max(...components.map((component) => component.col)) + 1, cellW: width, cellH: 64, gapX: 150, gapY: 110 };
@@ -2235,12 +2348,13 @@ function compileView(model, viewId) {
   if (!view) throw new Error(`Unknown view "${viewId}"`);
   const type = NATIVE_TYPES[view.type];
   if (!type) return null;
-  const diagram = { class: classView, sequence: sequenceView, lifecycle: stateView, architecture: architectureView }[type](model, view, elements);
-  return { type, path: `archify/${view.id}.${type}.json`, diagram };
+  const notes = [];
+  const diagram = { class: classView, sequence: sequenceView, lifecycle: stateView, architecture: architectureView }[type](model, view, elements, notes);
+  return { type, view: view.id, path: `archify/${view.id}.${type}.json`, diagram, notes };
 }
 
 function compileNative(model) {
-  return (model.views || []).map((view) => compileView(model, view.id)).filter(Boolean);
+  return (model.views || []).map((view) => compileView(model, view.id)).filter((entry) => entry?.diagram);
 }
 {
 const EXAMPLE = {"schema_version":1,"model_type":"enterprise","meta":{"title":"Order-to-Cash Platform","subtitle":"One repository, twelve consistent views: motivation to deployment.","organization":"Northwind Retail","codegen":{"package":"com.northwind.orders","namespace":"orders"}},"elements":[{"id":"cfo","kind":"stakeholder","label":"CFO"},{"id":"drv_cash","kind":"driver","label":"Slow cash collection"},{"id":"goal_dso","kind":"goal","label":"Cut days sales outstanding by 30%"},{"id":"out_auto","kind":"outcome","label":"90% of orders invoiced automatically"},{"id":"prin_api","kind":"principle","label":"API-first integration"},{"id":"req_pay","kind":"requirement","label":"Capture payment at checkout","doc":"Card and wallet payments are authorised before an order is confirmed."},{"id":"req_audit","kind":"requirement","label":"Auditable order history","doc":"Every order state change is recorded with actor and time."},{"id":"cap_fulfil","kind":"capability","label":"Order fulfilment"},{"id":"customer","kind":"business-actor","label":"Customer"},{"id":"sales_clerk","kind":"business-role","label":"Sales clerk"},{"id":"bs_ordering","kind":"business-service","label":"Ordering service"},{"id":"bp_o2c","kind":"business-process","label":"Order-to-cash"},{"id":"bp_take","kind":"business-process","label":"Take order"},{"id":"bp_bill","kind":"business-process","label":"Bill customer"},{"id":"bo_order","kind":"business-object","label":"Sales order"},{"id":"bo_invoice","kind":"contract","label":"Invoice"},{"id":"web_shop","kind":"application-component","label":"Web Shop","tech":"React + Next.js"},{"id":"order_svc","kind":"application-component","label":"Order Service","tech":"Node.js"},{"id":"payment_svc","kind":"application-component","label":"Payment Service","tech":"Kotlin"},{"id":"billing_svc","kind":"application-component","label":"Billing Service","tech":"Python"},{"id":"crm","kind":"application-component","label":"CRM","tech":"SaaS"},{"id":"as_order","kind":"application-service","label":"Order management"},{"id":"as_payment","kind":"application-service","label":"Payment processing"},{"id":"as_invoice","kind":"application-service","label":"Invoicing"},{"id":"ai_order_api","kind":"application-interface","label":"Order API","tech":"REST / JSON","operations":[{"method":"post","path":"/orders","summary":"Create an order","request":"Order","response":"Order"},{"method":"get","path":"/orders/{orderId}","summary":"Fetch an order","response":"Order"},{"method":"post","path":"/orders/{orderId}/payments","summary":"Pay for an order","request":"Payment","response":"Payment"}]},{"id":"ai_pay_api","kind":"application-interface","label":"Payment API","tech":"gRPC"},{"id":"do_order","kind":"data-object","label":"Order record"},{"id":"do_invoice","kind":"data-object","label":"Invoice record"},{"id":"ev_order_placed","kind":"application-event","label":"Order placed"},{"id":"k8s","kind":"node","label":"Kubernetes cluster","tech":"3 zones"},{"id":"pg","kind":"system-software","label":"PostgreSQL 16"},{"id":"kafka","kind":"system-software","label":"Kafka"},{"id":"ts_db","kind":"technology-service","label":"Managed SQL"},{"id":"ts_stream","kind":"technology-service","label":"Event streaming"},{"id":"art_order","kind":"artifact","label":"order-service.jar"},{"id":"art_pay","kind":"artifact","label":"payment-service.jar"},{"id":"edge","kind":"device","label":"Edge gateway","tech":"TLS termination"},{"id":"plat_base","kind":"plateau","label":"Baseline: manual invoicing"},{"id":"plat_target","kind":"plateau","label":"Target: automated O2C"},{"id":"gap_billing","kind":"gap","label":"No billing integration"},{"id":"wp_payments","kind":"work-package","label":"Launch payment service"},{"id":"wp_billing","kind":"work-package","label":"Automate invoicing"},{"id":"del_api","kind":"deliverable","label":"Payment API v1"},{"id":"Order","kind":"entity","label":"Order","attributes":[{"name":"id","type":"uuid","pk":true},{"name":"customerId","type":"uuid"},{"name":"status","type":"OrderStatus"},{"name":"total","type":"decimal"},{"name":"placedAt","type":"datetime"}],"methods":[{"name":"addLine","parameters":"sku: string, quantity: int","returns":"OrderLine"},{"name":"markPaid","parameters":"payment: Payment","returns":"void"}]},{"id":"OrderLine","kind":"entity","label":"OrderLine","attributes":[{"name":"id","type":"uuid","pk":true},{"name":"sku","type":"string"},{"name":"quantity","type":"int"},{"name":"unitPrice","type":"decimal"}]},{"id":"Payment","kind":"entity","label":"Payment","attributes":[{"name":"id","type":"uuid","pk":true},{"name":"amount","type":"decimal"},{"name":"method","type":"PaymentMethod"},{"name":"authorisedAt","type":"datetime","nullable":true}]},{"id":"OrderStatus","kind":"enum","label":"OrderStatus","attributes":[{"name":"DRAFT"},{"name":"PLACED"},{"name":"PAID"},{"name":"SHIPPED"},{"name":"CANCELLED"}]},{"id":"PaymentMethod","kind":"enum","label":"PaymentMethod","attributes":[{"name":"CARD"},{"name":"WALLET"}]},{"id":"PaymentGateway","kind":"interface","label":"PaymentGateway","methods":[{"name":"authorise","parameters":"payment: Payment","returns":"boolean","abstract":true}]},{"id":"CardGateway","kind":"class","label":"CardGateway","attributes":[{"name":"merchantId","type":"string","visibility":"private"}],"methods":[{"name":"authorise","parameters":"payment: Payment","returns":"boolean"}]},{"id":"WalletGateway","kind":"class","label":"WalletGateway","methods":[{"name":"authorise","parameters":"payment: Payment","returns":"boolean"}]},{"id":"OrderService","kind":"class","label":"OrderService","attributes":[{"name":"gateway","type":"PaymentGateway","visibility":"private"}],"methods":[{"name":"placeOrder","parameters":"order: Order","returns":"Order"},{"name":"pay","parameters":"orderId: uuid, payment: Payment","returns":"Payment"}]},{"id":"uc_actor_customer","kind":"actor","label":"Customer"},{"id":"uc_actor_clerk","kind":"actor","label":"Sales clerk"},{"id":"uc_actor_psp","kind":"actor","label":"Payment provider"},{"id":"uc_place","kind":"usecase","label":"Place order"},{"id":"uc_pay","kind":"usecase","label":"Pay for order"},{"id":"uc_track","kind":"usecase","label":"Track order"},{"id":"uc_refund","kind":"usecase","label":"Refund payment"},{"id":"uc_cancel","kind":"usecase","label":"Cancel order"},{"id":"s_init","kind":"initial","label":"Start"},{"id":"s_draft","kind":"state","label":"Draft"},{"id":"s_placed","kind":"state","label":"Placed"},{"id":"s_paid","kind":"state","label":"Paid"},{"id":"s_shipped","kind":"state","label":"Shipped"},{"id":"s_cancelled","kind":"state","label":"Cancelled"},{"id":"s_final","kind":"final","label":"End"},{"id":"a_init","kind":"initial","label":"Start"},{"id":"a_validate","kind":"action","label":"Validate payment request"},{"id":"a_risk","kind":"decision","label":"Risk check"},{"id":"a_3ds","kind":"action","label":"Run 3-D Secure challenge"},{"id":"a_merge","kind":"merge","label":""},{"id":"a_fork","kind":"fork","label":"Fork"},{"id":"a_capture","kind":"action","label":"Capture funds"},{"id":"a_receipt","kind":"action","label":"Send receipt"},{"id":"a_join","kind":"join","label":"Join"},{"id":"a_final","kind":"final","label":"End"},{"id":"p_start","kind":"start-event","label":"Order received","trigger":"message"},{"id":"p_check","kind":"task","label":"Check stock","taskType":"service"},{"id":"p_gw_stock","kind":"exclusive-gateway","label":"In stock?"},{"id":"p_pay","kind":"task","label":"Collect payment","taskType":"service"},{"id":"p_backorder","kind":"task","label":"Offer back-order","taskType":"user"},{"id":"p_split","kind":"parallel-gateway","label":""},{"id":"p_pick","kind":"task","label":"Pick and pack","taskType":"manual"},{"id":"p_invoice","kind":"task","label":"Issue invoice","taskType":"send"},{"id":"p_sync","kind":"parallel-gateway","label":""},{"id":"p_ship","kind":"task","label":"Ship order","taskType":"user"},{"id":"p_end","kind":"end-event","label":"Order fulfilled"},{"id":"p_end_cancel","kind":"end-event","label":"Order cancelled","trigger":"error"},{"id":"c_gateway","kind":"component","label":"API Gateway"},{"id":"c_orders","kind":"component","label":"orders-api"},{"id":"c_payments","kind":"component","label":"payments-core"},{"id":"c_ledger","kind":"component","label":"ledger"},{"id":"c_notify","kind":"component","label":"notifier"},{"id":"d_browser","kind":"device","label":"Customer browser"},{"id":"d_cluster","kind":"execution-node","label":"k8s: prod-eu","tech":"«executionEnvironment»"},{"id":"d_db","kind":"execution-node","label":"RDS PostgreSQL","tech":"Multi-AZ"},{"id":"d_art_web","kind":"artifact","label":"web-shop:1.4"},{"id":"d_art_orders","kind":"artifact","label":"orders-api:2.1"},{"id":"d_art_pay","kind":"artifact","label":"payments-core:0.9"}],"relationships":[{"id":"r_cfo_drv","from":"cfo","to":"drv_cash","kind":"association"},{"id":"r_drv_goal","from":"drv_cash","to":"goal_dso","kind":"influence","label":"+"},{"id":"r_out_goal","from":"out_auto","to":"goal_dso","kind":"realization"},{"id":"r_req_pay_out","from":"req_pay","to":"out_auto","kind":"realization"},{"id":"r_req_audit_out","from":"req_audit","to":"out_auto","kind":"realization"},{"id":"r_prin_req","from":"prin_api","to":"req_pay","kind":"influence"},{"id":"r_cap_out","from":"cap_fulfil","to":"out_auto","kind":"realization"},{"id":"r_pay_svc_req","from":"payment_svc","to":"req_pay","kind":"realization"},{"id":"r_order_svc_req","from":"order_svc","to":"req_audit","kind":"realization"},{"id":"r_bs_customer","from":"bs_ordering","to":"customer","kind":"serving"},{"id":"r_o2c_bs","from":"bp_o2c","to":"bs_ordering","kind":"realization"},{"id":"r_clerk_o2c","from":"sales_clerk","to":"bp_o2c","kind":"assignment"},{"id":"r_o2c_take","from":"bp_o2c","to":"bp_take","kind":"composition"},{"id":"r_o2c_bill","from":"bp_o2c","to":"bp_bill","kind":"composition"},{"id":"r_take_bill","from":"bp_take","to":"bp_bill","kind":"triggering"},{"id":"r_take_order","from":"bp_take","to":"bo_order","kind":"access","label":"creates"},{"id":"r_bill_invoice","from":"bp_bill","to":"bo_invoice","kind":"access","label":"creates"},{"id":"r_as_order_o2c","from":"as_order","to":"bp_o2c","kind":"serving"},{"id":"r_as_order_take","from":"as_order","to":"bp_take","kind":"serving"},{"id":"r_as_invoice_bill","from":"as_invoice","to":"bp_bill","kind":"serving"},{"id":"r_order_svc_as","from":"order_svc","to":"as_order","kind":"realization"},{"id":"r_pay_svc_as","from":"payment_svc","to":"as_payment","kind":"realization"},{"id":"r_billing_as","from":"billing_svc","to":"as_invoice","kind":"realization"},{"id":"r_as_pay_order","from":"as_payment","to":"order_svc","kind":"serving"},{"id":"r_order_api","from":"order_svc","to":"ai_order_api","kind":"composition"},{"id":"r_pay_api","from":"payment_svc","to":"ai_pay_api","kind":"composition"},{"id":"r_api_shop","from":"ai_order_api","to":"web_shop","kind":"serving"},{"id":"r_payapi_order","from":"ai_pay_api","to":"order_svc","kind":"serving"},{"id":"r_order_do","from":"order_svc","to":"do_order","kind":"access","label":"read/write"},{"id":"r_billing_do","from":"billing_svc","to":"do_invoice","kind":"access","label":"write"},{"id":"r_order_event","from":"order_svc","to":"ev_order_placed","kind":"triggering"},{"id":"r_event_billing","from":"ev_order_placed","to":"billing_svc","kind":"triggering"},{"id":"r_order_crm","from":"order_svc","to":"crm","kind":"flow","label":"customer updates"},{"id":"r_do_bo","from":"do_order","to":"bo_order","kind":"realization"},{"id":"r_ts_db_order","from":"ts_db","to":"order_svc","kind":"serving"},{"id":"r_ts_stream_billing","from":"ts_stream","to":"billing_svc","kind":"serving"},{"id":"r_pg_ts","from":"pg","to":"ts_db","kind":"realization"},{"id":"r_kafka_ts","from":"kafka","to":"ts_stream","kind":"realization"},{"id":"r_k8s_pg","from":"k8s","to":"pg","kind":"composition"},{"id":"r_k8s_kafka","from":"k8s","to":"kafka","kind":"composition"},{"id":"r_art_order","from":"art_order","to":"order_svc","kind":"realization"},{"id":"r_art_pay","from":"art_pay","to":"payment_svc","kind":"realization"},{"id":"r_k8s_art_order","from":"k8s","to":"art_order","kind":"assignment"},{"id":"r_k8s_art_pay","from":"k8s","to":"art_pay","kind":"assignment"},{"id":"r_edge_k8s","from":"edge","to":"k8s","kind":"flow","label":"HTTPS"},{"id":"r_base_target","from":"plat_base","to":"plat_target","kind":"triggering"},{"id":"r_gap_base","from":"gap_billing","to":"plat_base","kind":"association"},{"id":"r_wp_pay_del","from":"wp_payments","to":"del_api","kind":"realization"},{"id":"r_wp_pay_billing","from":"wp_payments","to":"wp_billing","kind":"triggering"},{"id":"r_del_target","from":"del_api","to":"plat_target","kind":"realization"},{"id":"r_wp_billing_gap","from":"wp_billing","to":"gap_billing","kind":"association","label":"closes"},{"id":"r_wp_billing_target","from":"wp_billing","to":"plat_target","kind":"realization"},{"id":"r_del_paysvc","from":"del_api","to":"payment_svc","kind":"realization"},{"id":"r_order_lines","from":"Order","to":"OrderLine","kind":"composition","fromMult":"1","toMult":"1..*","role":"lines"},{"id":"r_order_payments","from":"Order","to":"Payment","kind":"aggregation","fromMult":"1","toMult":"0..*","role":"payments"},{"id":"r_order_status","from":"Order","to":"OrderStatus","kind":"dependency"},{"id":"r_payment_method","from":"Payment","to":"PaymentMethod","kind":"dependency"},{"id":"r_card_gateway","from":"CardGateway","to":"PaymentGateway","kind":"realization"},{"id":"r_wallet_gateway","from":"WalletGateway","to":"PaymentGateway","kind":"realization"},{"id":"r_service_gateway","from":"OrderService","to":"PaymentGateway","kind":"dependency","label":"pays through"},{"id":"r_service_order","from":"OrderService","to":"Order","kind":"association","label":"manages"},{"id":"r_uc_c_place","from":"uc_actor_customer","to":"uc_place","kind":"association"},{"id":"r_uc_c_track","from":"uc_actor_customer","to":"uc_track","kind":"association"},{"id":"r_uc_c_cancel","from":"uc_actor_customer","to":"uc_cancel","kind":"association"},{"id":"r_uc_place_pay","from":"uc_place","to":"uc_pay","kind":"include"},{"id":"r_uc_refund_cancel","from":"uc_refund","to":"uc_cancel","kind":"extend"},{"id":"r_uc_psp_pay","from":"uc_actor_psp","to":"uc_pay","kind":"association"},{"id":"r_uc_psp_refund","from":"uc_actor_psp","to":"uc_refund","kind":"association"},{"id":"r_uc_clerk_cancel","from":"uc_actor_clerk","to":"uc_cancel","kind":"association"},{"id":"t_init","from":"s_init","to":"s_draft","kind":"transition"},{"id":"t_place","from":"s_draft","to":"s_placed","kind":"transition","label":"place"},{"id":"t_pay","from":"s_placed","to":"s_paid","kind":"transition","label":"pay"},{"id":"t_ship","from":"s_paid","to":"s_shipped","kind":"transition","label":"ship"},{"id":"t_done","from":"s_shipped","to":"s_final","kind":"transition"},{"id":"t_cancel_placed","from":"s_placed","to":"s_cancelled","kind":"transition","label":"cancel"},{"id":"t_cancel_paid","from":"s_paid","to":"s_cancelled","kind":"transition","label":"refund"},{"id":"t_cancel_done","from":"s_cancelled","to":"s_final","kind":"transition"},{"id":"f_a1","from":"a_init","to":"a_validate","kind":"control-flow"},{"id":"f_a2","from":"a_validate","to":"a_risk","kind":"control-flow"},{"id":"f_a3","from":"a_risk","to":"a_3ds","kind":"control-flow","guard":"amount > 250"},{"id":"f_a4","from":"a_risk","to":"a_merge","kind":"control-flow","guard":"else"},{"id":"f_a5","from":"a_3ds","to":"a_merge","kind":"control-flow"},{"id":"f_a6","from":"a_merge","to":"a_fork","kind":"control-flow"},{"id":"f_a7","from":"a_fork","to":"a_capture","kind":"control-flow"},{"id":"f_a8","from":"a_fork","to":"a_receipt","kind":"control-flow"},{"id":"f_a9","from":"a_capture","to":"a_join","kind":"control-flow"},{"id":"f_a10","from":"a_receipt","to":"a_join","kind":"control-flow"},{"id":"f_a11","from":"a_join","to":"a_final","kind":"control-flow"},{"id":"f_p1","from":"p_start","to":"p_check","kind":"sequence-flow"},{"id":"f_p2","from":"p_check","to":"p_gw_stock","kind":"sequence-flow"},{"id":"f_p3","from":"p_gw_stock","to":"p_pay","kind":"sequence-flow","label":"yes","guard":"inStock"},{"id":"f_p4","from":"p_gw_stock","to":"p_backorder","kind":"sequence-flow","label":"no","guard":"else"},{"id":"f_p5","from":"p_backorder","to":"p_end_cancel","kind":"sequence-flow"},{"id":"f_p6","from":"p_pay","to":"p_split","kind":"sequence-flow"},{"id":"f_p7","from":"p_split","to":"p_pick","kind":"sequence-flow"},{"id":"f_p8","from":"p_split","to":"p_invoice","kind":"sequence-flow"},{"id":"f_p9","from":"p_pick","to":"p_sync","kind":"sequence-flow"},{"id":"f_p10","from":"p_invoice","to":"p_sync","kind":"sequence-flow"},{"id":"f_p11","from":"p_sync","to":"p_ship","kind":"sequence-flow"},{"id":"f_p12","from":"p_ship","to":"p_end","kind":"sequence-flow"},{"id":"r_c_gw_orders","from":"c_gateway","to":"c_orders","kind":"dependency","label":"REST"},{"id":"r_c_orders_pay","from":"c_orders","to":"c_payments","kind":"dependency","label":"gRPC"},{"id":"r_c_pay_ledger","from":"c_payments","to":"c_ledger","kind":"dependency"},{"id":"r_c_orders_notify","from":"c_orders","to":"c_notify","kind":"flow","label":"order.placed"},{"id":"r_c_pay_notify","from":"c_payments","to":"c_notify","kind":"flow","label":"payment.captured"},{"id":"r_d_browser_cluster","from":"d_browser","to":"d_cluster","kind":"association","label":"HTTPS"},{"id":"r_d_web","from":"d_art_web","to":"d_cluster","kind":"deployment"},{"id":"r_d_orders","from":"d_art_orders","to":"d_cluster","kind":"deployment"},{"id":"r_d_pay","from":"d_art_pay","to":"d_cluster","kind":"deployment"},{"id":"r_d_cluster_db","from":"d_cluster","to":"d_db","kind":"association","label":"TLS 5432"}],"views":[{"id":"cross_layer","type":"archimate","title":"Cross-layer relationships","viewpoint":"Layered viewpoint","nodes":[{"ref":"customer","row":0,"col":0},{"ref":"bs_ordering","row":0,"col":1},{"ref":"bp_o2c","row":0,"col":2},{"ref":"sales_clerk","row":0,"col":3},{"ref":"as_order","row":1,"col":2},{"ref":"as_payment","row":1,"col":3},{"ref":"web_shop","row":2,"col":0},{"ref":"ai_order_api","row":2,"col":1},{"ref":"order_svc","row":2,"col":2},{"ref":"payment_svc","row":2,"col":3},{"ref":"ts_db","row":3,"col":2},{"ref":"art_pay","row":3,"col":3},{"ref":"pg","row":4,"col":2},{"ref":"k8s","row":4,"col":3}],"groups":[{"kind":"lane","label":"Business","tone":"cloud","wraps":["customer","bs_ordering","bp_o2c","sales_clerk"]},{"kind":"lane","label":"Application","tone":"frontend","wraps":["as_order","as_payment","web_shop","ai_order_api","order_svc","payment_svc"]},{"kind":"lane","label":"Technology","tone":"backend","wraps":["ts_db","art_pay","pg","k8s"]}],"exclude":["r_payapi_order","r_k8s_art_order"]},{"id":"app_cooperation","type":"archimate","title":"Application cooperation","viewpoint":"Application cooperation viewpoint","nodes":[{"ref":"web_shop","row":1,"col":0},{"ref":"ai_order_api","row":1,"col":1},{"ref":"order_svc","row":1,"col":2},{"ref":"ai_pay_api","row":0,"col":2},{"ref":"payment_svc","row":0,"col":3},{"ref":"ev_order_placed","row":1,"col":3},{"ref":"billing_svc","row":1,"col":4},{"ref":"do_order","row":2,"col":2},{"ref":"crm","row":2,"col":3},{"ref":"do_invoice","row":2,"col":4}],"groups":[{"kind":"boundary","label":"Order-to-cash domain","tone":"frontend","wraps":["ai_order_api","order_svc","ai_pay_api","payment_svc","ev_order_placed","billing_svc","do_order","do_invoice"]}],"exclude":["r_as_pay_order"]},{"id":"motivation","type":"archimate","title":"Why we are doing this","viewpoint":"Motivation viewpoint","nodes":[{"ref":"cfo","row":0,"col":0},{"ref":"drv_cash","row":0,"col":1},{"ref":"goal_dso","row":0,"col":2},{"ref":"out_auto","row":1,"col":2},{"ref":"cap_fulfil","row":1,"col":3},{"ref":"prin_api","row":2,"col":0},{"ref":"req_pay","row":2,"col":1},{"ref":"req_audit","row":2,"col":2},{"ref":"payment_svc","row":3,"col":1},{"ref":"order_svc","row":3,"col":2}]},{"id":"business_process","type":"archimate","title":"Business process cooperation","viewpoint":"Business process cooperation viewpoint","nodes":[{"ref":"sales_clerk","row":0,"col":0},{"ref":"bp_o2c","row":0,"col":1.5},{"ref":"bp_take","row":1,"col":1},{"ref":"bp_bill","row":1,"col":2},{"ref":"bo_order","row":2,"col":1},{"ref":"bo_invoice","row":2,"col":2},{"ref":"as_order","row":1,"col":0},{"ref":"as_invoice","row":1,"col":3}],"exclude":["r_as_order_o2c"]},{"id":"fulfilment_bpmn","type":"bpmn","title":"Order fulfilment process","vars":{"inStock":true},"nodes":[{"ref":"p_start","row":0,"col":0},{"ref":"p_check","row":0,"col":1},{"ref":"p_gw_stock","row":0,"col":2},{"ref":"p_pay","row":0,"col":3},{"ref":"p_split","row":0,"col":4},{"ref":"p_invoice","row":0,"col":5},{"ref":"p_backorder","row":1,"col":2},{"ref":"p_end_cancel","row":1,"col":3},{"ref":"p_pick","row":2,"col":5},{"ref":"p_sync","row":2,"col":6},{"ref":"p_ship","row":2,"col":7},{"ref":"p_end","row":2,"col":8}],"groups":[{"kind":"lane","label":"Sales","tone":"cloud","wraps":["p_start","p_check","p_gw_stock","p_pay","p_split","p_invoice","p_backorder","p_end_cancel"]},{"kind":"lane","label":"Warehouse","tone":"backend","wraps":["p_pick","p_sync","p_ship","p_end"]}]},{"id":"payment_activity","type":"activity","title":"Authorise and capture payment","vars":{"amount":320},"nodes":[{"ref":"a_init","row":0,"col":0},{"ref":"a_validate","row":0,"col":1},{"ref":"a_risk","row":0,"col":2},{"ref":"a_3ds","row":1,"col":3},{"ref":"a_merge","row":0,"col":4},{"ref":"a_fork","row":0,"col":5},{"ref":"a_capture","row":0,"col":6},{"ref":"a_receipt","row":1,"col":6},{"ref":"a_join","row":0,"col":7},{"ref":"a_final","row":0,"col":8}]},{"id":"order_states","type":"state","title":"Order lifecycle","nodes":[{"ref":"s_init","row":0,"col":0},{"ref":"s_draft","row":0,"col":1},{"ref":"s_placed","row":0,"col":2},{"ref":"s_paid","row":0,"col":3},{"ref":"s_shipped","row":0,"col":4},{"ref":"s_final","row":0,"col":5},{"ref":"s_cancelled","row":1,"col":3}]},{"id":"checkout_sequence","type":"sequence","title":"Checkout and payment","participants":["customer","web_shop","order_svc","payment_svc","billing_svc"],"messages":[{"from":"customer","to":"web_shop","label":"submit cart"},{"from":"web_shop","to":"order_svc","label":"POST /orders"},{"from":"order_svc","to":"order_svc","label":"validate lines","kind":"self"},{"from":"order_svc","to":"payment_svc","label":"authorise(payment)"},{"from":"payment_svc","to":"order_svc","label":"authorised","kind":"reply"},{"from":"order_svc","to":"billing_svc","label":"order.placed","kind":"async"},{"from":"order_svc","to":"web_shop","label":"201 Created","kind":"reply"},{"from":"web_shop","to":"customer","label":"confirmation","kind":"reply"}],"fragments":[{"kind":"alt","label":"payment authorised","from":3,"to":5}]},{"id":"use_cases","type":"usecase","title":"Ordering use cases","nodes":[{"ref":"uc_actor_customer","row":1,"col":0},{"ref":"uc_actor_clerk","row":2,"col":0},{"ref":"uc_place","row":0,"col":1},{"ref":"uc_track","row":1,"col":1},{"ref":"uc_cancel","row":2,"col":1},{"ref":"uc_pay","row":0,"col":2},{"ref":"uc_refund","row":2,"col":2},{"ref":"uc_actor_psp","row":1,"col":3}],"groups":[{"kind":"system","label":"Web Shop","wraps":["uc_place","uc_track","uc_cancel","uc_pay","uc_refund"]}]},{"id":"domain_classes","type":"class","title":"Order domain model","nodes":[{"ref":"OrderService","row":0,"col":0},{"ref":"PaymentGateway","row":0,"col":1.5},{"ref":"Order","row":1,"col":0},{"ref":"CardGateway","row":1,"col":1},{"ref":"WalletGateway","row":1,"col":2},{"ref":"OrderLine","row":2,"col":0},{"ref":"Payment","row":2,"col":1},{"ref":"PaymentMethod","row":2,"col":2},{"ref":"OrderStatus","row":1,"col":3}]},{"id":"components","type":"component","title":"Runtime components","nodes":[{"ref":"c_gateway","row":0,"col":0},{"ref":"c_orders","row":0,"col":1},{"ref":"c_payments","row":0,"col":2},{"ref":"c_notify","row":1,"col":1},{"ref":"c_ledger","row":1,"col":2}],"groups":[{"kind":"package","label":"order-to-cash","wraps":["c_orders","c_payments","c_notify","c_ledger"]}]},{"id":"deployment","type":"deployment","title":"Production deployment","nodes":[{"ref":"d_browser","row":1,"col":0},{"ref":"d_cluster","row":1,"col":1},{"ref":"d_db","row":1,"col":2},{"ref":"d_art_web","row":0,"col":0},{"ref":"d_art_orders","row":0,"col":1},{"ref":"d_art_pay","row":0,"col":2}]},{"id":"technology","type":"archimate","title":"Technology usage","viewpoint":"Technology usage viewpoint","nodes":[{"ref":"order_svc","row":0,"col":1},{"ref":"billing_svc","row":0,"col":2},{"ref":"art_order","row":1,"col":0},{"ref":"ts_db","row":1,"col":1},{"ref":"ts_stream","row":1,"col":2},{"ref":"pg","row":2,"col":1},{"ref":"kafka","row":2,"col":2},{"ref":"edge","row":3,"col":0},{"ref":"k8s","row":3,"col":1.5}],"groups":[{"kind":"boundary","label":"Platform","tone":"backend","wraps":["ts_db","ts_stream","pg","kafka","k8s"]}]},{"id":"migration","type":"archimate","title":"Migration roadmap","viewpoint":"Implementation and migration viewpoint","nodes":[{"ref":"plat_base","row":0,"col":0},{"ref":"plat_target","row":0,"col":2},{"ref":"gap_billing","row":1,"col":0},{"ref":"wp_billing","row":1,"col":1},{"ref":"wp_payments","row":2,"col":0},{"ref":"del_api","row":2,"col":1},{"ref":"payment_svc","row":2,"col":2}]}]};
@@ -2263,15 +2377,22 @@ const h = (tag, attrs = {}, ...children) => {
 // Native append() stringifies arrays and null; this accepts the same children as h().
 const add = (parent, ...children) => parent.append(...children.flat(Infinity).filter((child) => child !== null && child !== undefined && child !== false));
 
+// A stored model that no longer validates is never thrown away: it is handed
+// back as text so the Model tab can show it for repair.
 function loadStored() {
-  try { const raw = localStorage.getItem(STORE_KEY); if (raw) { const parsed = JSON.parse(raw); if (validateModel(parsed).ok) return parsed; } } catch (error) { /* storage unavailable */ }
-  return null;
+  let raw = null;
+  try { raw = localStorage.getItem(STORE_KEY); } catch (error) { return {}; }
+  if (!raw) return {};
+  try { const parsed = JSON.parse(raw); if (validateModel(parsed).ok) return { model: parsed }; } catch (error) { /* fall through with the raw text */ }
+  return { rejected: raw };
 }
+const stored = loadStored();
 const state = {
-  model: loadStored() || structuredClone(EXAMPLE),
-  viewId: null, tab: 'inspect', selected: null, // selected: { type: 'element' | 'relationship', id }
+  model: stored.model || structuredClone(EXAMPLE),
+  viewId: null, tab: stored.rejected ? 'model' : 'inspect', selected: null, // selected: { type: 'element' | 'relationship', id }
   codeTarget: 'typescript', codeFile: 0, phase: 'all', query: '', preset: null,
-  zoom: 1, panX: 0, panY: 0, fitted: false, run: null, adding: false, sourceDraft: null, sourceError: null,
+  zoom: 1, panX: 0, panY: 0, fitted: false, run: null, adding: false, sourceDraft: stored.rejected || null,
+  sourceError: stored.rejected ? [{ severity: 'error', message: 'Your saved model has errors, so the example is shown instead. Your JSON is below: fix it and press Apply, or press Discard edits to drop it.' }] : null,
 };
 
 function viewSlug(id) { return id.replace(/_/g, '-'); }
@@ -2304,7 +2425,28 @@ async function copyText(text, what) {
   }
 }
 
+// Removing things can empty a view. A view with nothing to draw is invalid,
+// so it goes too; the last remaining view is never removed.
+function viewIsDrawable(view) {
+  return view.type === 'sequence'
+    ? (view.participants || []).length >= 2 && (view.messages || []).length >= 1
+    : (view.nodes || []).length >= 1;
+}
+function wouldEmptyModel(change) {
+  const trial = structuredClone(state.model); change(trial);
+  return !trial.views.some(viewIsDrawable);
+}
+function pruneViews() {
+  const dropped = state.model.views.filter((view) => !viewIsDrawable(view));
+  if (!dropped.length) return '';
+  state.model.views = state.model.views.filter(viewIsDrawable);
+  if (!state.model.views.some((view) => view.id === state.viewId)) { state.viewId = state.model.views[0].id; state.fitted = false; }
+  return ` Removed ${dropped.length === 1 ? `the now-empty view "${dropped[0].title}"` : `${dropped.length} now-empty views`}.`;
+}
+
 function commit(message) {
+  const pruned = pruneViews();
+  if (message && pruned) message += pruned;
   try { localStorage.setItem(STORE_KEY, JSON.stringify(state.model)); } catch (error) { /* storage unavailable */ }
   state.sourceDraft = null; state.sourceError = null; state.run = null;
   renderAll();
@@ -2644,11 +2786,20 @@ function renderInspect(panel) {
   const tasks = generateTasks(state.model).tasks.filter((task) => task.trace.element === element.id);
   if (tasks.length) add(panel, h('div', { class: 'label', text: 'Generated tasks' }), h('div', { class: 'list' }, tasks.map((task) => h('div', { class: 'link', text: `${task.id} · ${task.title}` }))));
   add(panel, h('div', { class: 'row' },
-    view.type !== 'sequence' ? h('button', { class: 'btn small', type: 'button', onclick: () => { view.nodes = view.nodes.filter((node) => node.ref !== element.id); for (const group of view.groups || []) group.wraps = group.wraps.filter((ref) => ref !== element.id); view.groups = (view.groups || []).filter((group) => group.wraps.length); if (!view.groups.length) delete view.groups; state.selected = null; commit('Removed from this view'); } }, 'Remove from view') : null,
+    view.type !== 'sequence' ? h('button', { class: 'btn small', type: 'button', onclick: () => {
+      const strip = (target) => { target.nodes = target.nodes.filter((node) => node.ref !== element.id); for (const group of target.groups || []) group.wraps = group.wraps.filter((ref) => ref !== element.id); target.groups = (target.groups || []).filter((group) => group.wraps.length); if (!target.groups.length) delete target.groups; };
+      if (wouldEmptyModel((trial) => strip(trial.views.find((entry) => entry.id === view.id)))) { toast('This is the last element of the only view, so it stays. Add another element first.'); return; }
+      strip(view); state.selected = null; commit('Removed from this view.');
+    } }, 'Remove from view') : null,
     h('button', { class: 'btn small danger', type: 'button', onclick: () => deleteElement(element.id) }, 'Delete from model')));
 }
 function deleteElement(id) {
-  const model = state.model;
+  if (wouldEmptyModel((trial) => removeElement(trial, id))) { toast('This is the last element of the only view, so it stays. Add another element first.'); return; }
+  removeElement(state.model, id);
+  state.selected = null;
+  commit('Element deleted from the model.');
+}
+function removeElement(model, id) {
   model.elements = model.elements.filter((element) => element.id !== id);
   const gone = new Set(model.relationships.filter((rel) => rel.from === id || rel.to === id).map((rel) => rel.id));
   model.relationships = model.relationships.filter((rel) => !gone.has(rel.id));
@@ -2658,8 +2809,6 @@ function deleteElement(id) {
     if (view.groups) { for (const group of view.groups) group.wraps = group.wraps.filter((ref) => ref !== id); view.groups = view.groups.filter((group) => group.wraps.length); if (!view.groups.length) delete view.groups; }
     for (const key of ['relationships', 'exclude']) if (view[key]) view[key] = view[key].filter((rel) => !gone.has(rel));
   }
-  state.selected = null;
-  commit('Element deleted from the model');
 }
 
 function codeFilesFor(target) {
@@ -2727,7 +2876,7 @@ function renderModel(panel) {
     h('div', { class: 'row' }, h('button', { class: 'btn small', type: 'button', onclick: apply }, 'Apply'),
       h('button', { class: 'btn small', type: 'button', onclick: () => copyText($('model-source').value, 'model JSON') }, 'Copy'),
       h('button', { class: 'btn small', type: 'button', onclick: () => fileInput.click() }, 'Open file…'), fileInput,
-      state.sourceDraft !== null ? h('button', { class: 'btn small', type: 'button', onclick: () => { state.sourceDraft = null; state.sourceError = null; renderPanel(); } }, 'Discard edits') : null),
+      state.sourceDraft !== null ? h('button', { class: 'btn small', type: 'button', onclick: () => commit('Edits discarded.') }, 'Discard edits') : null),
     (state.sourceError || []).slice(0, 6).map((entry) => h('div', { class: 'diag error', text: entry.message })), area);
 }
 

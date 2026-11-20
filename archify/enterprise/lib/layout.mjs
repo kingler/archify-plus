@@ -221,14 +221,23 @@ function routeEdges(view, nodes, rels, gapX, gapY) {
   const byId = new Map(nodes.map((node) => [node.id, node]));
   const authored = view.routes || {};
   const edges = [];
+  const loops = [];
   const usedPairs = new Map();
   for (const rel of rels) {
     const a = byId.get(rel.from); const b = byId.get(rel.to);
-    if (!a || !b || a === b) continue;
+    if (!a || !b) continue;
+    if (a === b) {
+      // A self-relationship leaves the right side and re-enters the top.
+      const nth = loops.filter((loop) => loop.from === a.id).length;
+      const reach = 22 + nth * 10; const inset = Math.min(a.w / 2 - 4, 14 + nth * 10);
+      const y = a.cy - Math.min(a.h / 2 - 4, 8 + nth * 8); const x = a.x + a.w - inset;
+      loops.push({ id: rel.id, rel, from: a.id, to: a.id, points: [[a.x + a.w, y], [a.x + a.w + reach, y], [a.x + a.w + reach, a.y - reach + 4], [x, a.y - reach + 4], [x, a.y]] });
+      continue;
+    }
     const skip = new Set([a.id, b.id]);
-    const want = authored[rel.id] || {};
-    let best = null;
-    for (const option of candidates(a, b, gapX, gapY)) {
+    const choose = (want) => {
+     let best = null;
+     for (const option of candidates(a, b, gapX, gapY)) {
       if ((want.fromSide && want.fromSide !== option.fromSide) || (want.toSide && want.toSide !== option.toSide)) continue;
       const points = buildPoints(option, a, b);
       const length = points.slice(1).reduce((sum, point, index) => sum + Math.abs(point[0] - points[index][0]) + Math.abs(point[1] - points[index][1]), 0);
@@ -245,8 +254,11 @@ function routeEdges(view, nodes, rels, gapX, gapY) {
       if (usedPairs.get(pairKey) === `${option.shape}:${[option.fromSide, option.toSide].sort().join()}` && option.bends) bias += 4;
       const score = hits(points, nodes, skip) * 1000 + option.bends * 10 + (option.detour ? 14 : 0) + bias + length / 100;
       if (!best || score < best.score) best = { ...option, score };
-    }
-    if (!best) continue;
+     }
+     return best;
+    };
+    // Authored sides that no route can honour must not make the relationship vanish.
+    const best = choose(authored[rel.id] || {}) || choose({});
     usedPairs.set([a.id, b.id].sort().join('|'), `${best.shape}:${[best.fromSide, best.toSide].sort().join()}`);
     edges.push({ id: rel.id, rel, a, b, route: best });
   }
@@ -301,7 +313,7 @@ function routeEdges(view, nodes, rels, gapX, gapY) {
     }
     for (const edge of distinct) if (edge.lane !== undefined) edge.route.channel += (edge.lane - (lanes.length - 1) / 2) * 9;
   }
-  return edges.map((edge) => ({ id: edge.id, rel: edge.rel, from: edge.a.id, to: edge.b.id, points: buildPoints(edge.route, edge.a, edge.b) }));
+  return [...edges.map((edge) => ({ id: edge.id, rel: edge.rel, from: edge.a.id, to: edge.b.id, points: buildPoints(edge.route, edge.a, edge.b) })), ...loops];
 }
 
 function edgeLabelText(rel) {

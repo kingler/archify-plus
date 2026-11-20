@@ -92,7 +92,6 @@ export function validateModel(model) {
     for (const end of ['from', 'to']) {
       if (!elementIds.has(rel[end])) error('dangling-reference', { relationship: rel.id, end, target: rel[end] }, `Relationship "${rel.id}" ${end} "${rel[end]}" is not an element.`, ['Point the relationship at an existing element id, or add the element.']);
     }
-    if (rel.from === rel.to && !['transition', 'flow'].includes(rel.kind)) warning('self-relationship', { relationship: rel.id }, `Relationship "${rel.id}" connects "${rel.from}" to itself and is not drawn.`, ['Remove it or connect two elements.']);
   }
 
   // Generalisation must stay acyclic for code generation.
@@ -177,9 +176,21 @@ export function validateModel(model) {
 }
 
 // Small naming helpers shared by the generators.
-export const words = (text) => String(text).replace(/([a-z0-9])([A-Z])/g, '$1 $2').split(/[^A-Za-z0-9]+/).filter(Boolean);
+// Letters and digits of any script count, so a label such as "注文" stays a usable identifier.
+export const words = (text) => String(text).replace(/([a-z0-9])([A-Z])/g, '$1 $2').split(/[^\p{L}\p{N}]+/u).filter(Boolean);
 export const pascal = (text) => words(text).map((word) => word[0].toUpperCase() + word.slice(1)).join('') || 'Unnamed';
 export const camel = (text) => { const name = pascal(text); return name[0].toLowerCase() + name.slice(1); };
 export const snake = (text) => words(text).map((word) => word.toLowerCase()).join('_') || 'unnamed';
 export const kebab = (text) => words(text).map((word) => word.toLowerCase()).join('-') || 'unnamed';
 export const screaming = (text) => snake(text).toUpperCase();
+
+// A generated name that is a legal identifier and not yet in `taken`. Falls
+// back to the element or view id, which validation guarantees is unique ASCII.
+export function uniqueName(style, label, id, taken) {
+  let name = words(label).length ? style(label) : style(id);
+  if (/^\p{N}/u.test(name)) name = style(`n ${name}`);
+  if (taken.has(name.toLowerCase())) name = style(id);
+  for (let index = 2; taken.has(name.toLowerCase()); index += 1) name = style(`${id} ${index}`);
+  taken.add(name.toLowerCase());
+  return name;
+}

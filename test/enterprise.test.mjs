@@ -236,3 +236,136 @@ test('the CLI builds every output and refuses an invalid model', () => {
 test('the committed Studio page matches its sources', () => {
   assert.equal(fs.readFileSync(path.join(repoRoot, 'archify', 'enterprise', 'studio.html'), 'utf8'), buildStudio(), 'run: node archify/enterprise/scripts/build-studio.mjs');
 });
+
+// ---- Regressions from the first review of the enterprise layer --------------
+
+const tiny = (elements, relationships = [], views = null) => ({
+  schema_version: 1, model_type: 'enterprise', meta: { title: 'Tiny' }, elements, relationships,
+  views: views || [{ id: 'main', type: 'class', title: 'Main', nodes: elements.map((element, index) => ({ ref: element.id, row: 0, col: index })) }],
+});
+
+test('generated TypeScript for a subclass uses a value import, a legal constructor, and a full super call', () => {
+  const model = tiny([
+    { id: 'Base', kind: 'class', label: 'Base', attributes: [{ name: 'id', type: 'uuid' }, { name: 'note', type: 'string', nullable: true }] },
+    { id: 'Child', kind: 'class', label: 'Child', attributes: [{ name: 'opt', type: 'string', nullable: true }, { name: 'count', type: 'int' }] },
+  ], [{ id: 'r', from: 'Child', to: 'Base', kind: 'inheritance' }]);
+  const child = file(generateCode(model, 'typescript'), 'child.ts');
+  assert.match(child, /^import \{ Base \} from '\.\/base';$/m);
+  assert.match(child, /class Child extends Base \{/);
+  assert.match(child, /constructor\(\n {4}id: string,\n {4}public count: number,\n {4}note\?: string,\n {4}public opt\?: string,\n {2}\) \{ super\(id, note\); \}/);
+});
+
+test('a generated Python subclass may add a required field after an inherited default', () => {
+  const model = tiny([
+    { id: 'Base', kind: 'class', label: 'Base', attributes: [{ name: 'note', type: 'string', nullable: true }] },
+    { id: 'Child', kind: 'class', label: 'Child', attributes: [{ name: 'count', type: 'int' }] },
+  ], [{ id: 'r', from: 'Child', to: 'Base', kind: 'inheritance' }]);
+  const python = file(generateCode(model, 'python'), '.py');
+  assert.match(python, /@dataclass\nclass Base:/);
+  assert.match(python, /@dataclass\(kw_only=True\)\nclass Child\(Base\):\n {4}count: int/);
+});
+
+test('two relationships to one entity keep both fields and get distinct, correctly typed keys', () => {
+  const model = tiny([
+    { id: 'Order', kind: 'entity', label: 'Order', attributes: [{ name: 'id', type: 'uuid', pk: true }] },
+    { id: 'Address', kind: 'entity', label: 'Address', attributes: [{ name: 'id', type: 'int', pk: true }] },
+  ], [
+    { id: 'bill', from: 'Order', to: 'Address', kind: 'association', role: 'billing', toMult: '1' },
+    { id: 'ship', from: 'Order', to: 'Address', kind: 'association', role: 'shipping', toMult: '0..1' },
+  ]);
+  const order = classifierModel(model).find((type) => type.id === 'Order');
+  assert.deepEqual(order.fields.filter((field) => field.source !== 'attribute').map((field) => field.name), ['billing', 'shipping']);
+  assert.match(file(generateCode(model, 'typescript'), 'order.ts'), /billing: Address;\n {2}shipping\?: Address;/);
+  const sql = file(generateCode(model, 'sql'), 'schema.sql');
+  assert.match(sql, /"billing_id" INTEGER NOT NULL,\n {2}"shipping_id" INTEGER\n\);/);
+  assert.equal(sql.match(/ADD CONSTRAINT "fk_order_/g).length, 2);
+  assert.equal(new Set(sql.match(/"(?:fk|idx)_order_[a-z_]+"/g)).size, 4);
+
+  // Without roles the names still must not collide.
+  for (const rel of model.relationships) delete rel.role;
+  const unnamed = file(generateCode(model, 'sql'), 'schema.sql');
+  assert.match(unnamed, /"address_id" INTEGER NOT NULL,\n {2}"address_2_id" INTEGER\n/);
+  assert.deepEqual(classifierModel(model).find((type) => type.id === 'Order').fields.slice(1).map((field) => field.name), ['address', 'address2']);
+});
+
+test('a state that leaves on one event under two guards keeps both transitions', () => {
+  const model = tiny([
+    { id: 'a', kind: 'state', label: 'A' }, { id: 'b', kind: 'state', label: 'B' }, { id: 'c', kind: 'state', label: 'C' },
+  ], [
+    { id: 't1', from: 'a', to: 'b', kind: 'transition', label: 'go', guard: 'x > 1' },
+    { id: 't2', from: 'a', to: 'c', kind: 'transition', label: 'go', guard: 'x <= 1' },
+    { id: 't3', from: 'b', to: 'c', kind: 'transition', label: 'go' },
+  ], [{ id: 'sm', type: 'state', title: 'Machine', nodes: [{ ref: 'a', row: 0, col: 0 }, { ref: 'b', row: 0, col: 1 }, { ref: 'c', row: 1, col: 1 }] }]);
+  const machine = file(generateCode(model, 'statemachine'), 'machine.ts');
+  assert.match(machine, /A: \{ GO_TO_B: 'B', GO_TO_C: 'C' \}, \/\/ guards: GO_TO_B when x > 1; GO_TO_C when x <= 1/);
+  assert.match(machine, /B: \{ GO: 'C' \},/);
+});
+
+test('self-relationships and unroutable pinned sides are still drawn and exported', () => {
+  const model = tiny([
+    { id: 't1', kind: 'task', label: 'First' }, { id: 't2', kind: 'task', label: 'Second' },
+  ], [
+    { id: 'f1', from: 't1', to: 't2', kind: 'sequence-flow' },
+    { id: 'retry', from: 't2', to: 't2', kind: 'sequence-flow', label: 'retry' },
+  ], [{ id: 'p', type: 'bpmn', title: 'Process', routes: { f1: { fromSide: 'bottom', toSide: 'top' } }, nodes: [{ ref: 't1', row: 0, col: 0 }, { ref: 't2', row: 0, col: 1 }] }]);
+  assert.deepEqual(validateModel(model).diagnostics, []);
+  const { svg, layout } = renderView(model, 'p');
+  assert.deepEqual(layout.edges.map((edge) => edge.id).sort(), ['f1', 'retry']);
+  assert.ok(svg.includes('data-id="retry"'));
+  const loop = layout.edges.find((edge) => edge.id === 'retry');
+  const node = layout.nodes.find((entry) => entry.id === 't2');
+  assert.equal(loop.points[0][0], node.x + node.w);
+  assert.equal(loop.points.at(-1)[1], node.y);
+  const bpmn = file(generateCode(model, 'bpmn'), 'process.bpmn');
+  assert.match(bpmn, /<bpmn:sequenceFlow id="f1" sourceRef="t1" targetRef="t2"\/>/);
+  assert.match(bpmn, /<bpmn:sequenceFlow id="retry" sourceRef="t2" targetRef="t2" name="retry"\/>/);
+});
+
+test('non-ASCII labels, repeated titles, and leading digits yield distinct legal names', () => {
+  const model = tiny([
+    { id: 'order', kind: 'class', label: '注文' }, { id: 'customer', kind: 'class', label: '顧客' },
+    { id: 'three_d', kind: 'class', label: '3D Secure' }, { id: 'dup_a', kind: 'class', label: 'Thing' }, { id: 'dup_b', kind: 'class', label: 'Thing' },
+    { id: 's1', kind: 'state', label: '下書き' }, { id: 's2', kind: 'state', label: '確定' },
+  ], [{ id: 't', from: 's1', to: 's2', kind: 'transition', label: '確定する' }], [
+    { id: 'classes', type: 'class', title: 'Types', nodes: ['order', 'customer', 'three_d', 'dup_a', 'dup_b'].map((ref, col) => ({ ref, row: 0, col })) },
+    { id: 'first', type: 'state', title: 'Lifecycle', nodes: [{ ref: 's1', row: 0, col: 0 }, { ref: 's2', row: 0, col: 1 }] },
+    { id: 'second', type: 'state', title: 'Lifecycle', nodes: [{ ref: 's1', row: 0, col: 0 }, { ref: 's2', row: 0, col: 1 }] },
+  ]);
+  const names = classifierModel(model).map((type) => type.name);
+  assert.deepEqual(names, ['注文', '顧客', 'N3DSecure', 'Thing', 'DupB']);
+  const paths = [...generateCode(model, 'typescript'), ...generateCode(model, 'statemachine')].map((entry) => entry.path);
+  assert.equal(new Set(paths).size, paths.length, `colliding output paths: ${paths.join(', ')}`);
+  assert.ok(paths.includes('statemachine/lifecycle.ts') && paths.includes('statemachine/second.ts'));
+  assert.match(file(generateCode(model, 'statemachine'), 'lifecycle.ts'), /State = '下書き' \| '確定';/);
+});
+
+test('fractional grid positions and self-messages still compile to valid native diagrams', () => {
+  const directory = createScratchDirectory(path.join(os.tmpdir(), 'archify-enterprise-native-edge-'));
+  const model = tiny([
+    { id: 'a', kind: 'class', label: 'A' }, { id: 'b', kind: 'class', label: 'B' },
+    { id: 'x', kind: 'application-component', label: 'X' }, { id: 'y', kind: 'application-component', label: 'Y' },
+  ], [{ id: 'r', from: 'a', to: 'b', kind: 'association' }, { id: 'q', from: 'x', to: 'y', kind: 'serving' }, { id: 'me', from: 'a', to: 'a', kind: 'association' }], [
+    { id: 'cls', type: 'class', title: 'Classes', nodes: [{ ref: 'a', row: 0, col: 0 }, { ref: 'b', row: 0.4, col: 0 }] },
+    { id: 'arch', type: 'archimate', title: 'Arch', nodes: [{ ref: 'x', row: 0.2, col: 0.4 }, { ref: 'y', row: 0.4, col: 0.2 }] },
+    { id: 'seq', type: 'sequence', title: 'Seq', participants: ['x', 'y'], messages: [{ from: 'x', to: 'x', label: 'prepare', kind: 'self' }, { from: 'x', to: 'y', label: 'call' }, { from: 'y', to: 'y', label: 'work', kind: 'self' }] },
+    { id: 'solo', type: 'sequence', title: 'Solo', participants: ['x', 'y'], messages: [{ from: 'x', to: 'x', label: 'think', kind: 'self' }] },
+  ]);
+  assert.equal(validateModel(model).ok, true);
+  const compiled = compileNative(model);
+  assert.deepEqual(compiled.map((entry) => entry.view), ['cls', 'arch', 'seq']);
+  assert.deepEqual(compiled[0].diagram.types.map((type) => [type.row, type.col]), [[0, 0], [1, 0]]);
+  assert.match(compiled[0].notes.join(' '), /Self-relationship "me"/);
+  assert.deepEqual(compiled[2].diagram.messages.map((message) => message.note), ['X: prepare; Y: work']);
+  for (const entry of compiled) {
+    const input = path.join(directory, path.basename(entry.path));
+    fs.writeFileSync(input, JSON.stringify(entry.diagram));
+    const result = spawnSync(process.execPath, [archify, 'validate', entry.type, input], { cwd: directory, encoding: 'utf8' });
+    assert.equal(result.status, 0, `${entry.path}\n${result.stdout}\n${result.stderr}`);
+  }
+  // A view the native renderer cannot draw is reported, not written.
+  const modelFile = path.join(directory, 'model.json'); fs.writeFileSync(modelFile, JSON.stringify(model));
+  const run = spawnSync(process.execPath, [cli, 'archify', modelFile, '--out', path.join(directory, 'out')], { encoding: 'utf8' });
+  assert.equal(run.status, 0, run.stderr);
+  assert.match(run.stderr, /note: \[solo\] Every message is a self-message/);
+  assert.equal(fs.existsSync(path.join(directory, 'out', 'archify', 'solo.sequence.json')), false);
+});

@@ -212,6 +212,12 @@ full Viewer, validators, and delivery receipts:
 node bin/archify.mjs render class enterprise-out/archify/domain_classes.class.json
 ```
 
+Fractional grid positions are ranked into whole native cells. Where a native
+type cannot carry something over, the CLI prints a `note:` line: a sequence
+self-message becomes a note on the nearest real message, and a
+self-relationship or self-transition is left out. A sequence view made only of
+self-messages gets no native file.
+
 The architecture renderer has seven node types and four connection variants,
 so layer colour and solid versus dashed survive but ArchiMate shapes and
 markers do not. BPMN, activity, and use-case views have no native type; the

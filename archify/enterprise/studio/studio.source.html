@@ -171,15 +171,22 @@ const h = (tag, attrs = {}, ...children) => {
 // Native append() stringifies arrays and null; this accepts the same children as h().
 const add = (parent, ...children) => parent.append(...children.flat(Infinity).filter((child) => child !== null && child !== undefined && child !== false));
 
+// A stored model that no longer validates is never thrown away: it is handed
+// back as text so the Model tab can show it for repair.
 function loadStored() {
-  try { const raw = localStorage.getItem(STORE_KEY); if (raw) { const parsed = JSON.parse(raw); if (validateModel(parsed).ok) return parsed; } } catch (error) { /* storage unavailable */ }
-  return null;
+  let raw = null;
+  try { raw = localStorage.getItem(STORE_KEY); } catch (error) { return {}; }
+  if (!raw) return {};
+  try { const parsed = JSON.parse(raw); if (validateModel(parsed).ok) return { model: parsed }; } catch (error) { /* fall through with the raw text */ }
+  return { rejected: raw };
 }
+const stored = loadStored();
 const state = {
-  model: loadStored() || structuredClone(EXAMPLE),
-  viewId: null, tab: 'inspect', selected: null, // selected: { type: 'element' | 'relationship', id }
+  model: stored.model || structuredClone(EXAMPLE),
+  viewId: null, tab: stored.rejected ? 'model' : 'inspect', selected: null, // selected: { type: 'element' | 'relationship', id }
   codeTarget: 'typescript', codeFile: 0, phase: 'all', query: '', preset: null,
-  zoom: 1, panX: 0, panY: 0, fitted: false, run: null, adding: false, sourceDraft: null, sourceError: null,
+  zoom: 1, panX: 0, panY: 0, fitted: false, run: null, adding: false, sourceDraft: stored.rejected || null,
+  sourceError: stored.rejected ? [{ severity: 'error', message: 'Your saved model has errors, so the example is shown instead. Your JSON is below: fix it and press Apply, or press Discard edits to drop it.' }] : null,
 };
 
 function viewSlug(id) { return id.replace(/_/g, '-'); }
@@ -212,7 +219,28 @@ async function copyText(text, what) {
   }
 }
 
+// Removing things can empty a view. A view with nothing to draw is invalid,
+// so it goes too; the last remaining view is never removed.
+function viewIsDrawable(view) {
+  return view.type === 'sequence'
+    ? (view.participants || []).length >= 2 && (view.messages || []).length >= 1
+    : (view.nodes || []).length >= 1;
+}
+function wouldEmptyModel(change) {
+  const trial = structuredClone(state.model); change(trial);
+  return !trial.views.some(viewIsDrawable);
+}
+function pruneViews() {
+  const dropped = state.model.views.filter((view) => !viewIsDrawable(view));
+  if (!dropped.length) return '';
+  state.model.views = state.model.views.filter(viewIsDrawable);
+  if (!state.model.views.some((view) => view.id === state.viewId)) { state.viewId = state.model.views[0].id; state.fitted = false; }
+  return ` Removed ${dropped.length === 1 ? `the now-empty view "${dropped[0].title}"` : `${dropped.length} now-empty views`}.`;
+}
+
 function commit(message) {
+  const pruned = pruneViews();
+  if (message && pruned) message += pruned;
   try { localStorage.setItem(STORE_KEY, JSON.stringify(state.model)); } catch (error) { /* storage unavailable */ }
   state.sourceDraft = null; state.sourceError = null; state.run = null;
   renderAll();
@@ -552,11 +580,20 @@ function renderInspect(panel) {
   const tasks = generateTasks(state.model).tasks.filter((task) => task.trace.element === element.id);
   if (tasks.length) add(panel, h('div', { class: 'label', text: 'Generated tasks' }), h('div', { class: 'list' }, tasks.map((task) => h('div', { class: 'link', text: `${task.id} · ${task.title}` }))));
   add(panel, h('div', { class: 'row' },
-    view.type !== 'sequence' ? h('button', { class: 'btn small', type: 'button', onclick: () => { view.nodes = view.nodes.filter((node) => node.ref !== element.id); for (const group of view.groups || []) group.wraps = group.wraps.filter((ref) => ref !== element.id); view.groups = (view.groups || []).filter((group) => group.wraps.length); if (!view.groups.length) delete view.groups; state.selected = null; commit('Removed from this view'); } }, 'Remove from view') : null,
+    view.type !== 'sequence' ? h('button', { class: 'btn small', type: 'button', onclick: () => {
+      const strip = (target) => { target.nodes = target.nodes.filter((node) => node.ref !== element.id); for (const group of target.groups || []) group.wraps = group.wraps.filter((ref) => ref !== element.id); target.groups = (target.groups || []).filter((group) => group.wraps.length); if (!target.groups.length) delete target.groups; };
+      if (wouldEmptyModel((trial) => strip(trial.views.find((entry) => entry.id === view.id)))) { toast('This is the last element of the only view, so it stays. Add another element first.'); return; }
+      strip(view); state.selected = null; commit('Removed from this view.');
+    } }, 'Remove from view') : null,
     h('button', { class: 'btn small danger', type: 'button', onclick: () => deleteElement(element.id) }, 'Delete from model')));
 }
 function deleteElement(id) {
-  const model = state.model;
+  if (wouldEmptyModel((trial) => removeElement(trial, id))) { toast('This is the last element of the only view, so it stays. Add another element first.'); return; }
+  removeElement(state.model, id);
+  state.selected = null;
+  commit('Element deleted from the model.');
+}
+function removeElement(model, id) {
   model.elements = model.elements.filter((element) => element.id !== id);
   const gone = new Set(model.relationships.filter((rel) => rel.from === id || rel.to === id).map((rel) => rel.id));
   model.relationships = model.relationships.filter((rel) => !gone.has(rel.id));
@@ -566,8 +603,6 @@ function deleteElement(id) {
     if (view.groups) { for (const group of view.groups) group.wraps = group.wraps.filter((ref) => ref !== id); view.groups = view.groups.filter((group) => group.wraps.length); if (!view.groups.length) delete view.groups; }
     for (const key of ['relationships', 'exclude']) if (view[key]) view[key] = view[key].filter((rel) => !gone.has(rel));
   }
-  state.selected = null;
-  commit('Element deleted from the model');
 }
 
 function codeFilesFor(target) {
@@ -635,7 +670,7 @@ function renderModel(panel) {
     h('div', { class: 'row' }, h('button', { class: 'btn small', type: 'button', onclick: apply }, 'Apply'),
       h('button', { class: 'btn small', type: 'button', onclick: () => copyText($('model-source').value, 'model JSON') }, 'Copy'),
       h('button', { class: 'btn small', type: 'button', onclick: () => fileInput.click() }, 'Open file…'), fileInput,
-      state.sourceDraft !== null ? h('button', { class: 'btn small', type: 'button', onclick: () => { state.sourceDraft = null; state.sourceError = null; renderPanel(); } }, 'Discard edits') : null),
+      state.sourceDraft !== null ? h('button', { class: 'btn small', type: 'button', onclick: () => commit('Edits discarded.') }, 'Discard edits') : null),
     (state.sourceError || []).slice(0, 6).map((entry) => h('div', { class: 'diag error', text: entry.message })), area);
 }
 

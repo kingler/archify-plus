@@ -3,7 +3,7 @@
 // runs in the CLI and in the Studio.
 
 import { KINDS, isClassifier } from './notation.mjs';
-import { indexModel, viewRelationships, pascal, camel, snake, kebab, screaming } from './model.mjs';
+import { indexModel, viewRelationships, pascal, camel, snake, kebab, screaming, uniqueName } from './model.mjs';
 import { layoutView } from './layout.mjs';
 
 export const CODE_TARGETS = {
@@ -73,7 +73,8 @@ function many(multiplicity) {
 // implied by composition, aggregation, and association ends.
 export function classifierModel(model) {
   const elements = (model.elements || []).filter((element) => isClassifier(element.kind));
-  const types = elements.map((element) => ({ id: element.id, name: pascal(element.label), kind: element.kind, element, doc: element.doc || '', extends: [], implements: [], fields: [], methods: element.methods || [], references: [] }));
+  const taken = new Set();
+  const types = elements.map((element) => ({ id: element.id, name: uniqueName(pascal, element.label, element.id, taken), kind: element.kind, element, doc: element.doc || '', extends: [], implements: [], fields: [], methods: element.methods || [], references: [] }));
   const byId = new Map(types.map((type) => [type.id, type]));
   for (const type of types) {
     for (const attribute of type.element.attributes || []) type.fields.push({ ...attribute, type: attribute.type || 'any', source: 'attribute' });
@@ -85,8 +86,14 @@ export function classifierModel(model) {
     else if (rel.kind === 'realization') from.implements.push(to);
     else if (['composition', 'aggregation', 'association'].includes(rel.kind)) {
       const isMany = many(rel.toMult);
-      const name = rel.role || (isMany ? `${camel(to.name)}s` : camel(to.name));
-      if (!from.fields.some((field) => field.name === name || parseType(field.type).base === to.name)) {
+      // An attribute that already names or holds the target is the authored
+      // field. Otherwise every relationship gets its own field, so two
+      // associations to one type (billing and shipping address) both survive.
+      const base = rel.role || (isMany ? `${camel(to.name)}s` : camel(to.name));
+      const declared = from.fields.some((field) => field.source === 'attribute' && (field.name === base || (!rel.role && parseType(field.type).base === to.name)));
+      if (!declared) {
+        let name = base;
+        for (let index = 2; from.fields.some((field) => field.name === name); index += 1) name = `${base}${index}`;
         from.fields.push({ name, type: isMany ? `${to.name}[]` : to.name, visibility: 'public', nullable: /^0/.test(String(rel.toMult || '')) && !isMany, source: rel.kind, relationship: rel.id });
       }
       from.references.push({ rel, to });
@@ -106,27 +113,49 @@ function referenced(type, types) {
 
 // ---- TypeScript -----------------------------------------------------------
 
+const isClass = (type) => type.kind === 'class' || type.kind === 'abstract';
+
+// Enum literal names, unique within the enum and legal in every target.
+function literals(type) {
+  const taken = new Set();
+  return type.fields.map((item, index) => uniqueName(screaming, item.name, `value ${index + 1}`, taken));
+}
+
+// Constructor parameters of a class: inherited ones first, then its own, with
+// optional parameters last so the signature is legal.
+function constructorFields(type) {
+  const parent = type.extends.find(isClass);
+  const inherited = parent ? constructorFields(parent).map((entry) => ({ ...entry, own: false })) : [];
+  const own = type.fields.filter((item) => !item.static && !inherited.some((entry) => entry.item.name === item.name)).map((item) => ({ item, own: true }));
+  const all = [...inherited, ...own];
+  return [...all.filter((entry) => !entry.item.nullable), ...all.filter((entry) => entry.item.nullable)];
+}
+
 function typescript(model) {
   const types = classifierModel(model);
   const files = types.map((type) => {
-    const imports = referenced(type, types).map((name) => `import type { ${name} } from './${kebab(name)}';`);
-    const lines = [header(model, '//'), ...imports, ...(imports.length ? [''] : ['']), ...(type.doc ? [`/** ${type.doc} */`] : [])];
+    // A superclass is used as a value; everything else is a type-only import.
+    const superclass = isClass(type) ? type.extends.find(isClass) : null;
+    const contracts = isClass(type) ? [...type.extends.filter((parent) => parent !== superclass), ...type.implements] : [];
+    const imports = referenced(type, types).map((name) => `import ${superclass?.name === name ? '' : 'type '}{ ${name} } from './${kebab(name)}';`);
+    const lines = [header(model, '//'), ...imports, '', ...(type.doc ? [`/** ${type.doc} */`] : [])];
     const field = (item, modifiers = '') => `  ${modifiers}${item.name}${item.nullable ? '?' : ''}: ${typeName(item.type, 'ts', types)};`;
     const signature = (method) => `${method.name}(${parseParameters(method.parameters).map((parameter) => `${parameter.name}: ${typeName(parameter.type, 'ts', types)}`).join(', ')}): ${typeName(method.returns || 'void', 'ts', types)}`;
     if (type.kind === 'enum') {
-      lines.push(`export enum ${type.name} {`, ...type.fields.map((item) => `  ${screaming(item.name)} = '${screaming(item.name)}',`), '}');
-    } else if (type.kind === 'interface' || type.kind === 'record' || type.kind === 'entity') {
+      lines.push(`export enum ${type.name} {`, ...literals(type).map((name) => `  ${name} = '${name}',`), '}');
+    } else if (!isClass(type)) {
       const parents = [...type.extends, ...type.implements].map((parent) => parent.name);
       lines.push(`export interface ${type.name}${parents.length ? ` extends ${parents.join(', ')}` : ''} {`);
       lines.push(...type.fields.map((item) => field(item, type.kind === 'record' ? 'readonly ' : '')));
       lines.push(...type.methods.map((method) => `  ${signature(method)};`), '}');
     } else {
       const visibility = (item) => ({ private: 'private ', protected: 'protected ' }[item.visibility] || '');
-      lines.push(`export ${type.kind === 'abstract' ? 'abstract ' : ''}class ${type.name}${type.extends.length ? ` extends ${type.extends[0].name}` : ''}${type.implements.length ? ` implements ${type.implements.map((parent) => parent.name).join(', ')}` : ''} {`);
-      const required = type.fields.filter((item) => !item.static);
+      lines.push(`export ${type.kind === 'abstract' ? 'abstract ' : ''}class ${type.name}${superclass ? ` extends ${superclass.name}` : ''}${contracts.length ? ` implements ${contracts.map((parent) => parent.name).join(', ')}` : ''} {`);
       lines.push(...type.fields.filter((item) => item.static).map((item) => `  ${visibility(item)}static ${item.name}: ${typeName(item.type, 'ts', types)};`));
-      if (required.length) {
-        lines.push('  constructor(', ...required.map((item) => `    ${visibility(item) || 'public '}${item.name}${item.nullable ? '?' : ''}: ${typeName(item.type, 'ts', types)},`), `  ) {${type.extends.length ? ' super(); ' : ''}}`);
+      const parameters = constructorFields(type);
+      if (parameters.some((entry) => entry.own)) {
+        const call = superclass ? ` super(${constructorFields(superclass).map((entry) => entry.item.name).join(', ')}); ` : '';
+        lines.push('  constructor(', ...parameters.map(({ item, own }) => `    ${own ? visibility(item) || 'public ' : ''}${item.name}${item.nullable ? '?' : ''}: ${typeName(item.type, 'ts', types)},`), `  ) {${call}}`);
       }
       for (const method of type.methods) {
         if (method.abstract && type.kind === 'abstract') lines.push('', `  ${visibility(method)}abstract ${signature(method)};`);
@@ -150,7 +179,7 @@ function java(model) {
     const lines = [header(model, '//'), `package ${pkg};`, '', ...(type.doc ? [`/** ${type.doc} */`] : [])];
     const visibility = (item) => `${{ private: 'private', protected: 'protected', package: '' }[item.visibility] ?? 'public'} `.replace(/^ $/, '');
     const signature = (method) => `${typeName(method.returns || 'void', 'java', types)} ${method.name}(${parseParameters(method.parameters).map((parameter) => `${typeName(parameter.type, 'java', types)} ${parameter.name}`).join(', ')})`;
-    if (type.kind === 'enum') lines.push(`public enum ${type.name} {`, `    ${type.fields.map((item) => screaming(item.name)).join(',\n    ')}`, '}');
+    if (type.kind === 'enum') lines.push(`public enum ${type.name} {`, `    ${literals(type).join(',\n    ')}`, '}');
     else if (type.kind === 'interface') {
       lines.push(`public interface ${type.name}${[...type.extends, ...type.implements].length ? ` extends ${[...type.extends, ...type.implements].map((parent) => parent.name).join(', ')}` : ''} {`);
       lines.push(...type.methods.map((method) => `    ${signature(method)};`), '}');
@@ -187,7 +216,7 @@ function python(model) {
     lines.push('');
     const signature = (method) => `def ${snake(method.name)}(self${parseParameters(method.parameters).map((parameter) => `, ${snake(parameter.name)}: ${typeName(parameter.type, 'py', types)}`).join('')}) -> ${typeName(method.returns || 'void', 'py', types)}:`;
     const doc = type.doc ? [`    """${type.doc}"""`] : [];
-    if (type.kind === 'enum') lines.push(`class ${type.name}(Enum):`, ...doc, ...type.fields.map((item) => `    ${screaming(item.name)} = "${screaming(item.name)}"`));
+    if (type.kind === 'enum') lines.push(`class ${type.name}(Enum):`, ...doc, ...literals(type).map((name) => `    ${name} = "${name}"`));
     else if (type.kind === 'interface') {
       lines.push(`class ${type.name}(Protocol):`, ...doc);
       if (!type.methods.length && !doc.length) lines.push('    ...');
@@ -195,7 +224,10 @@ function python(model) {
       if (type.methods.length) lines.pop();
     } else {
       const bases = [...type.extends.map((parent) => parent.name), ...(type.kind === 'abstract' ? ['ABC'] : [])];
-      lines.push(`@dataclass${type.kind === 'record' ? '(frozen=True)' : ''}`, `class ${type.name}${bases.length ? `(${bases.join(', ')})` : ''}:`, ...doc);
+      // A subclass may add required fields after an inherited default, which
+      // positional dataclass fields forbid; keyword-only fields allow it.
+      const options = [...(type.kind === 'record' ? ['frozen=True'] : []), ...(type.extends.length ? ['kw_only=True'] : [])];
+      lines.push(`@dataclass${options.length ? `(${options.join(', ')})` : ''}`, `class ${type.name}${bases.length ? `(${bases.join(', ')})` : ''}:`, ...doc);
       const fields = [...type.fields].sort((p, q) => Number(Boolean(p.nullable || parseType(p.type).many)) - Number(Boolean(q.nullable || parseType(q.type).many)));
       for (const item of fields) {
         const annotation = typeName(item.type, 'py', types);
@@ -227,11 +259,17 @@ function sql(model) {
     if (!from || !to || !['composition', 'aggregation', 'association'].includes(rel.kind)) continue;
     // The key lives on the "many" end; a to-one association keeps it on the source.
     const [holder, target] = many(rel.toMult) || rel.kind === 'composition' ? [to, from] : [from, to];
-    foreign.get(holder.id).push({ column: `${snake(target.name)}_id`, target, required: rel.kind === 'composition' || !/^0/.test(String(holder === to ? rel.fromMult : rel.toMult) || ''), cascade: rel.kind === 'composition' });
+    // A to-one key takes the role name; repeated keys to one table stay distinct.
+    const keys = foreign.get(holder.id);
+    const stem = holder === from && rel.role ? snake(rel.role) : snake(target.name);
+    let column = `${stem}_id`;
+    if (keys.some((key) => key.column === column) && rel.role && holder !== from) column = `${stem}_${snake(rel.role)}_id`;
+    for (let index = 2; keys.some((key) => key.column === column); index += 1) column = `${stem}_${index}_id`;
+    keys.push({ column, target, required: rel.kind === 'composition' || !/^0/.test(String(holder === to ? rel.fromMult : rel.toMult) || ''), cascade: rel.kind === 'composition' });
   }
   for (const type of enums) {
     if (entities.some((entity) => entity.fields.some((item) => parseType(item.type).base === type.name))) {
-      lines.push(`CREATE TYPE ${q(snake(type.name))} AS ENUM (${type.fields.map((item) => `'${screaming(item.name)}'`).join(', ')});`, '');
+      lines.push(`CREATE TYPE ${q(snake(type.name))} AS ENUM (${literals(type).map((name) => `'${name}'`).join(', ')});`, '');
     }
   }
   const constraints = [];
@@ -247,8 +285,11 @@ function sql(model) {
       columns.push(`  ${q(snake(item.name))} ${sqlType}${item.pk ? ' PRIMARY KEY' : item.nullable ? '' : ' NOT NULL'}${item.unique ? ' UNIQUE' : ''}`);
     }
     for (const key of foreign.get(entity.id)) {
-      if (!fields.some((item) => snake(item.name) === key.column)) columns.push(`  ${q(key.column)} UUID${key.required ? ' NOT NULL' : ''}`);
-      const targetKey = key.target.fields.find((item) => item.pk)?.name || 'id';
+      // The key column has the type of the primary key it references.
+      const targetPk = key.target.fields.find((item) => item.source === 'attribute' && item.pk);
+      const keyType = targetPk ? PRIMITIVES[parseType(targetPk.type).base.toLowerCase()]?.sql || 'TEXT' : 'UUID';
+      if (!fields.some((item) => snake(item.name) === key.column)) columns.push(`  ${q(key.column)} ${keyType}${key.required ? ' NOT NULL' : ''}`);
+      const targetKey = targetPk?.name || 'id';
       constraints.push(`ALTER TABLE ${q(table)} ADD CONSTRAINT ${q(`fk_${table}_${key.column}`)} FOREIGN KEY (${q(key.column)}) REFERENCES ${q(snake(key.target.name))} (${q(snake(targetKey))})${key.cascade ? ' ON DELETE CASCADE' : ''};`);
       constraints.push(`CREATE INDEX ${q(`idx_${table}_${key.column}`)} ON ${q(table)} (${q(key.column)});`);
     }
@@ -274,6 +315,7 @@ function yaml(value, indent = 0) {
 function openapi(model) {
   const interfaces = (model.elements || []).filter((element) => Array.isArray(element.operations) && element.operations.length);
   if (!interfaces.length) return [];
+  const filePaths = new Set();
   const types = classifierModel(model);
   const schemaRef = (name) => (types.some((type) => type.name === name) ? { $ref: `#/components/schemas/${name}` } : { type: 'object' });
   const property = (item) => {
@@ -284,7 +326,7 @@ function openapi(model) {
   };
   const schemas = {};
   for (const type of types) {
-    if (type.kind === 'enum') schemas[type.name] = { type: 'string', enum: type.fields.map((item) => screaming(item.name)) };
+    if (type.kind === 'enum') schemas[type.name] = { type: 'string', enum: literals(type) };
     else if (['entity', 'record'].includes(type.kind)) {
       const required = type.fields.filter((item) => !item.nullable && !parseType(item.type).many).map((item) => item.name);
       schemas[type.name] = { type: 'object', ...(required.length ? { required } : {}), properties: Object.fromEntries(type.fields.map((item) => [item.name, property(item)])) };
@@ -304,7 +346,7 @@ function openapi(model) {
       } };
     }
     const doc = { openapi: '3.1.0', info: { title: element.label, version: '0.1.0', description: element.doc || `Generated from the ${model.meta?.title || 'enterprise'} model.` }, paths, components: { schemas } };
-    return { path: `openapi/${kebab(element.label)}.yaml`, content: `${header(model, '#')}\n${yaml(doc)}\n` };
+    return { path: `openapi/${uniqueName(kebab, element.label, element.id, filePaths)}.yaml`, content: `${header(model, '#')}\n${yaml(doc)}\n` };
   });
 }
 
@@ -312,30 +354,46 @@ function openapi(model) {
 
 function statemachine(model) {
   const { elements } = indexModel(model);
+  const machines = new Set(); const paths = new Set();
   return (model.views || []).filter((view) => view.type === 'state').map((view) => {
-    const name = pascal(view.title);
+    const name = uniqueName(pascal, view.title, view.id, machines);
     const rels = viewRelationships(model, view).filter((rel) => rel.kind === 'transition');
     const states = (view.nodes || []).map((node) => elements.get(node.ref)).filter((element) => element && element.kind === 'state');
     const stateIds = new Set(states.map((state) => state.id));
-    const key = (element) => screaming(element.label);
+    const stateNames = new Set();
+    const keys = new Map(states.map((state) => [state.id, uniqueName(screaming, state.label, state.id, stateNames)]));
+    const key = (element) => keys.get(element.id);
     const initial = rels.find((rel) => elements.get(rel.from)?.kind === 'initial' && stateIds.has(rel.to));
     const finals = rels.filter((rel) => elements.get(rel.to)?.kind === 'final' && stateIds.has(rel.from)).map((rel) => key(elements.get(rel.from)));
     const table = new Map(states.map((state) => [key(state), []]));
     for (const rel of rels) {
       if (!stateIds.has(rel.from) || !stateIds.has(rel.to)) continue;
-      table.get(key(elements.get(rel.from))).push({ event: screaming(rel.label || `to ${elements.get(rel.to).label}`), to: key(elements.get(rel.to)) });
+      table.get(key(elements.get(rel.from))).push({ event: screaming(rel.label || `to ${key(elements.get(rel.to))}`), to: key(elements.get(rel.to)), guard: rel.guard });
     }
+    // One state may leave on the same event under different guards. An object
+    // key can hold one target, so those events are named by their target too.
+    for (const entries of table.values()) {
+      const seen = new Set();
+      for (const entry of entries) {
+        const repeated = entries.filter((other) => other.event === entry.event).length > 1;
+        let event = repeated ? `${entry.event}_TO_${entry.to}` : entry.event;
+        for (let index = 2; seen.has(event); index += 1) event = `${entry.event}_TO_${entry.to}_${index}`;
+        seen.add(event);
+        entry.key = event;
+      }
+    }
+    for (const entries of table.values()) for (const entry of entries) entry.event = entry.key;
     const events = [...new Set([...table.values()].flat().map((entry) => entry.event))];
     const union = (items) => (items.length ? items.map((item) => `'${item}'`).join(' | ') : 'never');
     const lines = [header(model, '//'), '', `export type ${name}State = ${union([...table.keys()])};`, `export type ${name}Event = ${union(events)};`, '',
       `export const ${camel(name)}Initial: ${name}State = '${initial ? key(elements.get(initial.to)) : [...table.keys()][0]}';`,
       `export const ${camel(name)}Final: readonly ${name}State[] = [${[...new Set(finals)].map((item) => `'${item}'`).join(', ')}];`, '',
       `export const ${camel(name)}Transitions: Record<${name}State, Partial<Record<${name}Event, ${name}State>>> = {`,
-      ...[...table.entries()].map(([state, entries]) => `  ${state}: {${entries.length ? ` ${entries.map((entry) => `${entry.event}: '${entry.to}'`).join(', ')} ` : ''}},`), '};', '',
+      ...[...table.entries()].map(([state, entries]) => `  ${state}: {${entries.length ? ` ${entries.map((entry) => `${entry.event}: '${entry.to}'`).join(', ')} ` : ''}},${entries.some((entry) => entry.guard) ? ` // guards: ${entries.filter((entry) => entry.guard).map((entry) => `${entry.event} when ${String(entry.guard).replace(/[\r\n]+/g, ' ')}`).join('; ')}` : ''}`), '};', '',
       `export function ${camel(name)}Next(state: ${name}State, event: ${name}Event): ${name}State {`,
       `  const next = ${camel(name)}Transitions[state][event];`,
       '  if (!next) throw new Error(`Illegal transition: ${state} on ${event}`);', '  return next;', '}'];
-    return { path: `statemachine/${kebab(view.title)}.ts`, content: `${lines.join('\n')}\n` };
+    return { path: `statemachine/${uniqueName(kebab, view.title, view.id, paths)}.ts`, content: `${lines.join('\n')}\n` };
   });
 }
 
@@ -351,6 +409,7 @@ const BPMN_EVENT_DEFS = { message: 'messageEventDefinition', timer: 'timerEventD
 
 function bpmn(model) {
   const { elements } = indexModel(model);
+  const paths = new Set();
   return (model.views || []).filter((view) => view.type === 'bpmn' || view.type === 'activity').map((view) => {
     const layout = layoutView(model, view);
     const processId = `Process_${view.id}`;
@@ -389,7 +448,7 @@ function bpmn(model) {
     for (const node of layout.nodes) bounds(node.id, node, KINDS[node.kind].shape === 'gateway' ? ' isMarkerVisible="true"' : '');
     for (const edge of flows) out.push(`      <bpmndi:BPMNEdge id="${edge.id}_di" bpmnElement="${edge.id}">`, ...edge.points.map(([x, y]) => `        <di:waypoint x="${Math.round(x)}" y="${Math.round(y)}"/>`), '      </bpmndi:BPMNEdge>');
     out.push('    </bpmndi:BPMNPlane>', '  </bpmndi:BPMNDiagram>', '</bpmn:definitions>');
-    return { path: `bpmn/${kebab(view.title)}.bpmn`, content: `${out.join('\n')}\n` };
+    return { path: `bpmn/${uniqueName(kebab, view.title, view.id, paths)}.bpmn`, content: `${out.join('\n')}\n` };
   });
 }
 
