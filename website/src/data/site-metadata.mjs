@@ -13,6 +13,10 @@ const descriptions = {
     en: ['Archify vs Mermaid, Excalidraw and PlantUML — How to Choose', 'Compare Archify with Mermaid, Excalidraw, PlantUML and D2: speed, zero syntax barrier, 10 diagram types, 4-style synced one-page explainers, visual polish, everyday or codebase scope, and honest limits.'],
     zh: ['Archify、Mermaid、Excalidraw、PlantUML 怎么选？', '全面对比 Archify 与 Mermaid、Excalidraw、PlantUML、D2：创作门槛与速度、生活/科普/代码全场景覆盖、10 种图型、4 风格图文联动一页式解答、防重叠颜值与适用边界。'],
   },
+  enterprise: {
+    en: ['Archify Enterprise — ArchiMate, BPMN and UML From One Model', 'Keep one typed-JSON model and draw it as ArchiMate viewpoints, BPMN and UML views in a single visual language, then generate code and a TOGAF ADM delivery plan from it. Try the interactive Studio in your browser.'],
+    zh: ['Archify 企业架构 — 一个模型画出 ArchiMate、BPMN 与 UML', '用一份类型化 JSON 模型，以统一的视觉语言画出 ArchiMate 视点、BPMN 与 UML 视图，并由同一模型生成代码和按 TOGAF ADM 阶段排列的交付计划。可在浏览器中直接试用交互式 Studio。'],
+  },
   index: {
     en: ['Archify — Interactive Diagrams & One-Page Explainers for Anything', 'Open-source (Apache-2.0) AI agent skill turning any idea, everyday plan, concept, Mermaid draft, or codebase into 10 polished interactive HTML diagram types or 4-style conclusion-first explainers — no syntax to memorize.'],
     zh: ['Archify — 把万物变成可互动的可视化图表与一页式解答', '开源免费（Apache-2.0）的 AI Agent 技能，无需画图语法即可将生活规划、复杂知识、旅行攻略或代码仓库快速生成高颜值单文件交互 HTML（10 种图型与 4 套排版风格 Explainer）。'],
@@ -37,7 +41,7 @@ const descriptions = {
 const websiteId = `${canonicalOrigin}/#website`;
 const softwareId = `${canonicalOrigin}/#software`;
 const sourceId = `${canonicalOrigin}/#source`;
-const articlePages = ['agent-diagrams', 'cases/mco-runtime', 'compare'];
+const articlePages = ['agent-diagrams', 'cases/mco-runtime', 'compare', 'enterprise'];
 const language = lang => (lang === 'zh' ? 'zh-Hans' : 'en');
 function answerFact(fact, lang) {
   const index = lang === 'zh' ? 1 : 0;

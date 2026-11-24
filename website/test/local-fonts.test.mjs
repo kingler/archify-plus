@@ -40,7 +40,7 @@ test('local font declarations preserve the original families, weights and swap b
     assert.ok(manifest.fonts.some(font => font.file === face.file));
   }
   for (const page of pages) {
-    const headPage = ['cases/mco-runtime', 'compare'].includes(page) ? 'agent-diagrams' : page;
+    const headPage = ['cases/mco-runtime', 'compare', 'enterprise'].includes(page) ? 'agent-diagrams' : page;
     const head = fs.readFileSync(new URL(`../src/data/${headPage}-head.html`, import.meta.url), 'utf8');
     assert.doesNotMatch(head, /fonts\.googleapis\.com|fonts\.gstatic\.com/);
     assert.equal((head.match(/href="fonts\/fonts.css"/g) || []).length, 1);
