@@ -1,6 +1,12 @@
 export const SKILL_ID = 'archify';
-export const EXPECTED_REPOSITORY = 'https://github.com/tt-a1i/archify';
-export const DEFAULT_MANIFEST_URL = 'https://tt-a1i.github.io/archify/skill-updates/archify/stable.json';
+export const EXPECTED_REPOSITORY = 'https://github.com/kingler/archify-plus';
+export const DEFAULT_MANIFEST_URL = 'https://kingler.github.io/archify-plus/skill-updates/archify/stable.json';
+// archify-plus continues from upstream Archify 3.2.0. A stable manifest may
+// still name the upstream repository for that release or an earlier one, so
+// the last upstream manifest stays valid until this fork publishes its own.
+// A newer version must come from EXPECTED_REPOSITORY.
+export const UPSTREAM_REPOSITORY = 'https://github.com/tt-a1i/archify';
+export const LAST_UPSTREAM_VERSION = '3.2.0';
 
 const CONTROL_OR_BIDI = /[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/u;
 const HEX_40 = /^[a-f0-9]{40}$/;
@@ -126,11 +132,18 @@ export function validateLocalRelease(value) {
   };
 }
 
-export function validateReleaseNotesUrl(value, version) {
+function isUpstreamPredecessor(repository, version) {
+  return repository === UPSTREAM_REPOSITORY && compareSemver(version, LAST_UPSTREAM_VERSION) <= 0;
+}
+
+export function validateReleaseNotesUrl(value, version, repository = EXPECTED_REPOSITORY) {
   if (!isStableCoreVersion(version)) {
     throw new UpdateContractError('release notes require a stable core version');
   }
-  const expected = `https://github.com/tt-a1i/archify/releases/tag/v${version}`;
+  if (repository !== EXPECTED_REPOSITORY && !isUpstreamPredecessor(repository, version)) {
+    throw new UpdateContractError('release notes URL is outside the exact trusted release path');
+  }
+  const expected = `${repository}/releases/tag/v${version}`;
   if (value !== expected) {
     throw new UpdateContractError('release notes URL is outside the exact trusted release path');
   }
@@ -155,7 +168,8 @@ export function validateStableUpdateManifest(value) {
     || value.channel !== 'stable'
     || !isStableCoreVersion(value.version)
     || !hasExactKeys(value.source, ['repository', 'ref', 'treeSha'])
-    || value.source.repository !== EXPECTED_REPOSITORY
+    || (value.source.repository !== EXPECTED_REPOSITORY
+      && !isUpstreamPredecessor(value.source.repository, value.version))
     || value.source.ref !== `v${value.version}`
     || !HEX_40.test(value.source.treeSha)
     || !hasExactKeys(value.artifact, ['sha256'])
@@ -164,7 +178,7 @@ export function validateStableUpdateManifest(value) {
   }
   validateCanonicalUtcTimestamp(value.publishedAt);
   validateReleaseSummary(value.summary);
-  validateReleaseNotesUrl(value.releaseNotes, value.version);
+  validateReleaseNotesUrl(value.releaseNotes, value.version, value.source.repository);
   if (!['normal', 'security'].includes(value.severity)) {
     throw new UpdateContractError('invalid update severity');
   }

@@ -22,6 +22,7 @@ TypeScript stays on the supported 6.x line because the Astro checker currently r
 ## Source ownership
 
 - `src/pages/*.astro`: five English pages and reusable Chinese route wrappers. Existing English file URLs remain available; the Chinese homepage builds as `zh.html`, with four pages under `zh/`.
+- `src/pages/enterprise.astro` with `src/content/enterprise.{en,zh}.md`: the Enterprise models page. It embeds the Studio, which `scripts/stage-public.mjs` copies unchanged from the tracked `archify/enterprise/studio.html` to `enterprise-studio.html`; rebuild that file with `node archify/enterprise/scripts/build-studio.mjs`, never edit the staged copy.
 - `src/layouts/SiteLayout.astro` and `src/components/Navigation.astro`: shared document and navigation.
 - `src/components/Brand.tsx`: shared server-rendered React identity; no unnecessary hydration is shipped. Future interactive React components can opt into Astro client directives.
 - `src/components/GalleryCard.astro` and `src/data/gallery-presentation.mjs`: shared gallery presentation. The existing artifact builder imports the same card renderer and curated case metadata.

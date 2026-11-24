@@ -30,9 +30,26 @@ export function stagePublic(repo, target) {
   }
 }
 
+// The Enterprise Studio is a generated, self-contained page inside the Skill
+// package. The site serves that exact tracked file; it is not copied into docs/.
+export function stageEnterpriseStudio(repo, target) {
+  const source = 'archify/enterprise/studio.html';
+  const tracked = execFileSync('git', ['ls-files', '-z', '--', source], { cwd: repo, encoding: 'utf8' }).split('\0').filter(Boolean);
+  if (tracked.length !== 1) throw new Error(`Enterprise Studio must be a tracked file: ${source}`);
+  let current = repo;
+  for (const segment of source.split('/')) {
+    current = path.join(current, segment);
+    if (fs.lstatSync(current).isSymbolicLink()) throw new Error(`Refusing public asset symlink: ${source}`);
+  }
+  const output = path.join(target, 'enterprise-studio.html');
+  if (fs.existsSync(output)) throw new Error('Duplicate public URL: enterprise-studio.html');
+  fs.copyFileSync(current, output);
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const root = fileURLToPath(new URL('../', import.meta.url));
   stagePublic(path.resolve(root, '..'), path.join(root, '.public'));
   stageSkillDistribution(path.resolve(root, '..'), path.join(root, '.public'));
+  stageEnterpriseStudio(path.resolve(root, '..'), path.join(root, '.public'));
   console.log('Staged tracked public URLs; four pages are rendered by Astro.');
 }

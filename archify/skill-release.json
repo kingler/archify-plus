@@ -2,9 +2,9 @@
   "schemaVersion": 1,
   "skillId": "archify",
   "channel": "stable",
-  "version": "3.2.0",
+  "version": "3.3.0",
   "source": {
-    "repository": "https://github.com/tt-a1i/archify"
+    "repository": "https://github.com/kingler/archify-plus"
   },
-  "updateManifestUrl": "https://tt-a1i.github.io/archify/skill-updates/archify/stable.json"
+  "updateManifestUrl": "https://kingler.github.io/archify-plus/skill-updates/archify/stable.json"
 }

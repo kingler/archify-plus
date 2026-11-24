@@ -40,7 +40,7 @@ function stableManifest(overrides = {}) {
     },
     artifact: { sha256: 'b'.repeat(64) },
     summary: 'Contract fixture.',
-    releaseNotes: 'https://github.com/tt-a1i/archify/releases/tag/v2.16.0',
+    releaseNotes: 'https://github.com/kingler/archify-plus/releases/tag/v2.16.0',
     severity: 'normal',
     ...overrides,
   };
@@ -48,10 +48,10 @@ function stableManifest(overrides = {}) {
 
 test('shared release constants identify the only trusted updater source', () => {
   assert.equal(SKILL_ID, 'archify');
-  assert.equal(EXPECTED_REPOSITORY, 'https://github.com/tt-a1i/archify');
+  assert.equal(EXPECTED_REPOSITORY, 'https://github.com/kingler/archify-plus');
   assert.equal(
     DEFAULT_MANIFEST_URL,
-    'https://tt-a1i.github.io/archify/skill-updates/archify/stable.json',
+    'https://kingler.github.io/archify-plus/skill-updates/archify/stable.json',
   );
 });
 
@@ -124,10 +124,30 @@ test('stable manifests enforce one exact schema and canonical release identity',
     stableManifest({ summary: '\u202eunsafe' }),
     stableManifest({ severity: 'urgent' }),
     stableManifest({ releaseNotes: 'https://github.com:443/tt-a1i/archify/releases/tag/v2.16.0' }),
-    stableManifest({ releaseNotes: 'https://github.com/tt-a1i/archify/releases/tag/v2.16.0?' }),
+    stableManifest({ releaseNotes: 'https://github.com/kingler/archify-plus/releases/tag/v2.16.0?' }),
     stableManifest({ releaseNotes: 'https://GITHUB.COM/tt-a1i/archify/releases/tag/v2.16.0' }),
   ];
   for (const value of invalid) {
     assert.throws(() => validateStableUpdateManifest(value), UpdateContractError);
   }
+});
+
+test('an upstream manifest is trusted only up to the last upstream release', () => {
+  const upstream = (version) => ({
+    ...stableManifest(),
+    version,
+    source: { ...stableManifest().source, repository: 'https://github.com/tt-a1i/archify', ref: `v${version}` },
+    releaseNotes: `https://github.com/tt-a1i/archify/releases/tag/v${version}`,
+  });
+  assert.equal(validateStableUpdateManifest(upstream('3.2.0')).source.repository, 'https://github.com/tt-a1i/archify');
+  assert.equal(validateStableUpdateManifest(upstream('3.1.0')).version, '3.1.0');
+  // A newer release must come from this repository, with its own release notes.
+  assert.throws(() => validateStableUpdateManifest(upstream('3.2.1')), UpdateContractError);
+  assert.throws(() => validateStableUpdateManifest(upstream('3.3.0')), UpdateContractError);
+  assert.throws(() => validateStableUpdateManifest({
+    ...upstream('3.2.0'), releaseNotes: 'https://github.com/kingler/archify-plus/releases/tag/v3.2.0',
+  }), UpdateContractError);
+  assert.throws(() => validateStableUpdateManifest({
+    ...stableManifest(), releaseNotes: `https://github.com/tt-a1i/archify/releases/tag/v${stableManifest().version}`,
+  }), UpdateContractError);
 });

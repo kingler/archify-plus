@@ -37,13 +37,13 @@ export async function verifyPackagedUpdateChecker(skillRoot, cacheDirectory) {
     version: candidateVersion,
     publishedAt: '2026-08-28T00:00:00Z',
     source: {
-      repository: 'https://github.com/tt-a1i/archify',
+      repository: 'https://github.com/kingler/archify-plus',
       ref: `v${candidateVersion}`,
       treeSha: 'a'.repeat(40),
     },
     artifact: { sha256: 'b'.repeat(64) },
     summary: 'Package smoke candidate.',
-    releaseNotes: `https://github.com/tt-a1i/archify/releases/tag/v${candidateVersion}`,
+    releaseNotes: `https://github.com/kingler/archify-plus/releases/tag/v${candidateVersion}`,
     severity: 'normal',
   };
   const notifierReceipt = await checker.checkForUpdate({
